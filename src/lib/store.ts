@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { CallState, Message, Expert } from '@/types';
+import { CallState, Message, Expert, MediaItem } from '@/types';
 
 interface CallStore extends CallState {
   setSessionId: (id: string | null) => void;
@@ -13,6 +13,10 @@ interface CallStore extends CallState {
   setIsProcessing: (processing: boolean) => void;
   setIsSpeaking: (speaking: boolean) => void;
   setError: (error: string | null) => void;
+  setMediaItems: (items: MediaItem[]) => void;
+  setIsMediaLoading: (loading: boolean) => void;
+  setMediaError: (error: string | null) => void;
+  resetMedia: () => void;
   reset: () => void;
 }
 
@@ -25,6 +29,9 @@ const getInitialState = (): CallState => ({
   isProcessing: false,
   isSpeaking: false,
   error: null,
+  mediaItems: [],
+  isMediaLoading: false,
+  mediaError: null,
 });
 
 export const useCallStore = create<CallStore>((set) => ({
@@ -54,5 +61,14 @@ export const useCallStore = create<CallStore>((set) => ({
   setIsProcessing: (processing) => set({ isProcessing: processing }),
   setIsSpeaking: (speaking) => set({ isSpeaking: speaking }),
   setError: (error) => set({ error }),
+  setMediaItems: (items) => set({ mediaItems: items }),
+  setIsMediaLoading: (loading) => set({ isMediaLoading: loading }),
+  setMediaError: (error) => set({ mediaError: error }),
+  resetMedia: () =>
+    set({
+      mediaItems: [],
+      isMediaLoading: false,
+      mediaError: null,
+    }),
   reset: () => set(getInitialState()),
 }));

@@ -6,6 +6,7 @@ import {
   useEffect,
   useCallback,
   useMemo,
+  type PointerEvent as ReactPointerEvent,
 } from 'react';
 import {
   startRecording,
@@ -13,7 +14,7 @@ import {
   isAudioRecordingSupported,
   playAudio,
 } from '@/lib/audio-utils';
-import { Message } from '@/types';
+import { Message, MediaItem } from '@/types';
 import { useCallStore } from '@/lib/store';
 import ExpertBadge from '@/components/ExpertBadge';
 import MessageBubble from '@/components/MessageBubble';
@@ -49,6 +50,14 @@ type StreamResponseMessage =
   | { type: 'complete'; text: string; processingTimeMs?: number }
   | { type: 'error'; message: string }
   | { type: 'done' };
+
+const MEDIA_CARD_PLACEHOLDERS = [
+  { id: 'media-card-1', label: 'Media Slot 1' },
+  { id: 'media-card-2', label: 'Media Slot 2' },
+  { id: 'media-card-3', label: 'Media Slot 3' },
+] as const;
+
+const MEDIA_SWIPE_THRESHOLD_PX = 60;
 
 function createMessageId(): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
@@ -100,11 +109,22 @@ export default function CallInterface() {
     setIsProcessing,
     setIsSpeaking,
     setError,
+    mediaItems,
+    isMediaLoading,
+    mediaError,
+    setMediaItems,
+    setIsMediaLoading,
+    setMediaError,
+    resetMedia,
   } = useCallStore();
 
   const [isBrowserSupported, setIsBrowserSupported] = useState(true);
   const [isStartLoading, setIsStartLoading] = useState(false);
   const [isHolding, setIsHolding] = useState(false);
+  const [activeMediaIndex, setActiveMediaIndex] = useState(0);
+  const [mediaPointerStartX, setMediaPointerStartX] = useState<number | null>(
+    null,
+  );
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -113,6 +133,21 @@ export default function CallInterface() {
   const streamingPlayerRef = useRef<StreamingAudioPlayer | null>(null);
   const isHoldingRef = useRef(false);
   const errorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mediaRequestAbortRef = useRef<AbortController | null>(null);
+  const hasTriggeredMediaRef = useRef(false);
+  const lastMediaRequestLengthRef = useRef(0);
+  const mediaRequestInFlightRef = useRef<'preview' | 'final' | null>(null);
+  const mediaContextRef = useRef<{
+    transcript: string;
+    responsePreview: string;
+    expertName?: string;
+    expertiseAreas?: string[];
+  }>({
+    transcript: '',
+    responsePreview: '',
+    expertName: undefined,
+    expertiseAreas: undefined,
+  });
 
   const callStatus: CallStatus = useMemo(() => {
     if (isProcessing) return 'processing';
@@ -205,6 +240,202 @@ export default function CallInterface() {
     streamingPlayerRef.current?.stop();
   }, []);
 
+  const mediaItemCount = mediaItems.length;
+
+  const goToNextMediaCard = useCallback(() => {
+    setActiveMediaIndex(prev => {
+      const total =
+        mediaItemCount > 0 ? mediaItemCount : MEDIA_CARD_PLACEHOLDERS.length;
+      if (total <= 0) return 0;
+      return (prev + 1) % total;
+    });
+  }, [mediaItemCount]);
+
+  const goToPreviousMediaCard = useCallback(() => {
+    setActiveMediaIndex(prev => {
+      const total =
+        mediaItemCount > 0 ? mediaItemCount : MEDIA_CARD_PLACEHOLDERS.length;
+      if (total <= 0) return 0;
+      return (prev - 1 + total) % total;
+    });
+  }, [mediaItemCount]);
+
+  const handleMediaPointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (!event.isPrimary) return;
+
+      const total =
+        mediaItemCount > 0 ? mediaItemCount : MEDIA_CARD_PLACEHOLDERS.length;
+      if (total <= 1) return;
+
+      setMediaPointerStartX(event.clientX);
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch {
+        // setPointerCapture is not supported in some environments; ignore errors
+      }
+    },
+    [mediaItemCount],
+  );
+
+  const handleMediaPointerUp = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      if (!event.isPrimary) return;
+
+      if (mediaPointerStartX === null) return;
+
+      const total =
+        mediaItemCount > 0 ? mediaItemCount : MEDIA_CARD_PLACEHOLDERS.length;
+      if (total <= 1) {
+        setMediaPointerStartX(null);
+        try {
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        } catch {
+          // ignore if capture was never set
+        }
+        return;
+      }
+
+      const deltaX = event.clientX - mediaPointerStartX;
+
+      if (Math.abs(deltaX) >= MEDIA_SWIPE_THRESHOLD_PX) {
+        if (deltaX < 0) {
+          goToNextMediaCard();
+        } else {
+          goToPreviousMediaCard();
+        }
+      }
+
+      setMediaPointerStartX(null);
+
+      try {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      } catch {
+        // ignore if capture was never set
+      }
+    },
+    [goToNextMediaCard, goToPreviousMediaCard, mediaItemCount, mediaPointerStartX],
+  );
+
+  const handleMediaPointerCancel = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      setMediaPointerStartX(null);
+      try {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      } catch {
+        // ignore if capture was never set
+      }
+    },
+    [],
+  );
+
+  const abortPendingMediaRequest = useCallback(() => {
+    if (mediaRequestAbortRef.current) {
+      mediaRequestAbortRef.current.abort();
+      mediaRequestAbortRef.current = null;
+    }
+    mediaRequestInFlightRef.current = null;
+  }, []);
+
+  const triggerMediaFetch = useCallback(
+    (reason: 'preview' | 'final') => {
+      const context = mediaContextRef.current;
+      const trimmedResponse = context.responsePreview.trim();
+
+      if (!trimmedResponse) {
+        return;
+      }
+
+      if (reason === 'preview') {
+        if (
+          hasTriggeredMediaRef.current ||
+          mediaRequestInFlightRef.current === 'preview'
+        ) {
+          return;
+        }
+        if (trimmedResponse.length < 80) {
+          return;
+        }
+        if (!/[.!?]\s/.test(trimmedResponse)) {
+          return;
+        }
+      } else if (reason === 'final') {
+        const delta = trimmedResponse.length - lastMediaRequestLengthRef.current;
+        if (delta < 80 && mediaRequestInFlightRef.current !== 'preview') {
+          return;
+        }
+      }
+
+      abortPendingMediaRequest();
+
+      if (reason === 'preview') {
+        hasTriggeredMediaRef.current = true;
+      }
+      mediaRequestInFlightRef.current = reason;
+      setIsMediaLoading(true);
+      setMediaError(null);
+
+      const controller = new AbortController();
+      mediaRequestAbortRef.current = controller;
+
+      const payload = {
+        transcript: context.transcript || undefined,
+        responsePreview: trimmedResponse,
+        expertName: context.expertName || undefined,
+        expertiseAreas: context.expertiseAreas ?? undefined,
+        limit: 5,
+      };
+
+      const run = async () => {
+        try {
+          const response = await fetch('/api/media/suggestions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+            signal: controller.signal,
+          });
+
+          if (!response.ok) {
+            const errorJson = (await response.json().catch(() => null)) as {
+              error?: string;
+            } | null;
+            throw new Error(
+              errorJson?.error ??
+                `Media suggestion request failed (${response.status}).`,
+            );
+          }
+
+          const data = (await response.json()) as {
+            items?: MediaItem[];
+          };
+
+          if (controller.signal.aborted) return;
+
+          const items = Array.isArray(data.items) ? data.items : [];
+          setMediaItems(items);
+          lastMediaRequestLengthRef.current = trimmedResponse.length;
+        } catch (error) {
+          if (controller.signal.aborted) return;
+          console.error('Failed to fetch media suggestions:', error);
+          setMediaItems([]);
+          setMediaError(
+            error instanceof Error ? error.message : 'Failed to load visuals.',
+          );
+        } finally {
+          if (controller.signal.aborted) return;
+          setIsMediaLoading(false);
+          mediaRequestInFlightRef.current = null;
+          mediaRequestAbortRef.current = null;
+        }
+      };
+
+      run().catch(error => {
+        console.error('Unexpected media fetch error:', error);
+      });
+    },
+    [abortPendingMediaRequest, setIsMediaLoading, setMediaError, setMediaItems],
+  );
+
   const setStatus = useCallback(
     (status: CallStatus) => {
       setIsListening(status === 'listening');
@@ -220,6 +451,16 @@ export default function CallInterface() {
       mediaRecorderRef.current = null;
       sessionIdRef.current = null;
       stopPlayback();
+      abortPendingMediaRequest();
+      resetMedia();
+      hasTriggeredMediaRef.current = false;
+      lastMediaRequestLengthRef.current = 0;
+      mediaContextRef.current = {
+        transcript: '',
+        responsePreview: '',
+        expertName: undefined,
+        expertiseAreas: undefined,
+      };
       setStatus('idle');
       setSessionId(null);
       setIsActive(false);
@@ -242,6 +483,8 @@ export default function CallInterface() {
       setSessionId,
       setStatus,
       stopPlayback,
+      abortPendingMediaRequest,
+      resetMedia,
     ],
   );
 
@@ -483,6 +726,18 @@ export default function CallInterface() {
     let hasStartedSpeaking = false;
 
     try {
+      abortPendingMediaRequest();
+      resetMedia();
+      hasTriggeredMediaRef.current = false;
+      lastMediaRequestLengthRef.current = 0;
+      mediaRequestInFlightRef.current = null;
+      mediaContextRef.current = {
+        transcript: '',
+        responsePreview: '',
+        expertName: currentExpert?.name ?? undefined,
+        expertiseAreas: currentExpert?.expertiseAreas ?? undefined,
+      };
+
       setStatus('processing');
       const audioBlob = await stopRecording(recorder);
 
@@ -605,6 +860,15 @@ export default function CallInterface() {
             reasoning: payload.expert.reasoning,
           });
         }
+
+        const expertName = payload.expert?.name ?? currentExpert?.name;
+        const expertiseAreas =
+          payload.expert?.expertiseAreas ?? currentExpert?.expertiseAreas;
+
+        mediaContextRef.current.transcript = cleanedTranscript;
+        mediaContextRef.current.expertName = expertName ?? undefined;
+        mediaContextRef.current.expertiseAreas = expertiseAreas ?? undefined;
+        mediaContextRef.current.responsePreview = '';
 
         expertMessageId = createMessageId();
         addMessage({
@@ -833,6 +1097,12 @@ export default function CallInterface() {
     ? 'Starting...'
     : 'Start Call';
 
+  const previousMediaIndex =
+    (activeMediaIndex - 1 + MEDIA_CARD_PLACEHOLDERS.length) %
+    MEDIA_CARD_PLACEHOLDERS.length;
+  const nextMediaIndex =
+    (activeMediaIndex + 1) % MEDIA_CARD_PLACEHOLDERS.length;
+
   return (
     <div className="relative min-h-screen bg-slate-950 text-gray-100 lg:flex lg:h-screen lg:flex-col lg:overflow-hidden">
       {error ? (
@@ -882,19 +1152,50 @@ export default function CallInterface() {
               />
             </svg>
           </div>
-          <div className="relative z-10 flex h-full flex-col justify-between p-16 text-white">
-            <div className="max-w-xl space-y-6">
-              <span className="inline-flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-sm font-semibold uppercase tracking-widest text-white/80">
-                Concierge Mode
-              </span>
-              <h1 className="text-4xl font-semibold leading-tight">
-                Real-time support with your expert concierge.
-              </h1>
-              <p className="text-base text-white/80">
-                This space is reserved for immersive call visuals, real-time analytics, and contextual information about your ongoing conversation.
-              </p>
-            </div>
+          <div className="relative z-10 flex h-full flex-col p-16 text-white">
+            <div
+              className="relative flex flex-1 items-center justify-center select-none cursor-grab active:cursor-grabbing touch-pan-y"
+              onPointerDown={handleMediaPointerDown}
+              onPointerUp={handleMediaPointerUp}
+              onPointerCancel={handleMediaPointerCancel}
+              role="presentation"
+            >
+              {MEDIA_CARD_PLACEHOLDERS.map((card, index) => {
+                const isActive = index === activeMediaIndex;
+                const isPrevious = index === previousMediaIndex;
+                const isNext = index === nextMediaIndex;
 
+                let positionClasses =
+                  'pointer-events-none opacity-0 scale-90 translate-x-0 z-0';
+
+                if (isActive) {
+                  positionClasses =
+                    'pointer-events-auto z-30 translate-x-0 scale-100 opacity-100 shadow-2xl shadow-black/40';
+                } else if (isPrevious) {
+                  positionClasses =
+                    'pointer-events-none z-20 -translate-x-[55%] scale-[0.95] opacity-80 shadow-xl shadow-black/25';
+                } else if (isNext) {
+                  positionClasses =
+                    'pointer-events-none z-20 translate-x-[55%] scale-[0.95] opacity-80 shadow-xl shadow-black/25';
+                }
+
+                const backgroundGradient = isActive
+                  ? 'from-white/40 via-white/20 to-white/10'
+                  : 'from-white/20 via-white/10 to-white/5';
+
+                return (
+                  <div
+                    key={card.id}
+                    className={`absolute flex h-[36rem] w-full max-w-[28rem] items-center justify-center rounded-[2.5rem] border border-white/25 bg-gradient-to-br ${backgroundGradient} backdrop-blur-xl transition-all duration-500 ease-out ${positionClasses}`}
+                    aria-hidden={!isActive}
+                  >
+                    <span className="text-sm font-semibold uppercase tracking-[0.3em] text-white/70">
+                      {card.label}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
             <div className="mt-16 rounded-3xl border border-white/20 bg-white/10 p-8 backdrop-blur-md">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-semibold uppercase tracking-[0.3em] text-white/70">

@@ -38,6 +38,17 @@ export interface Session {
   createdAt: number;
 }
 
+export interface MediaItem {
+  id: string;
+  imageUrl: string;
+  caption: string;
+  sourceUrl?: string;
+  attribution?: string;
+  originalQuery?: string;
+  width?: number;
+  height?: number;
+}
+
 // CallState interface - manages the overall state of an active call session
 export interface CallState {
   sessionId: string | null;
@@ -48,4 +59,7 @@ export interface CallState {
   isProcessing: boolean;
   isSpeaking: boolean;
   error: string | null;
+  mediaItems: MediaItem[];
+  isMediaLoading: boolean;
+  mediaError: string | null;
 }
