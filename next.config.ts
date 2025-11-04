@@ -28,6 +28,19 @@ const nextConfig: NextConfig = {
         protocol: 'https',
         hostname: 'api.openai.com',
       },
+      {
+        protocol: 'https',
+        hostname: 'images.unsplash.com',
+      },
+      {
+        protocol: 'https',
+        hostname: '*.pexels.com',
+      },
+      // Allow all HTTPS images (needed for Google Image Search results from any domain)
+      {
+        protocol: 'https',
+        hostname: '**',
+      },
     ],
   },
 

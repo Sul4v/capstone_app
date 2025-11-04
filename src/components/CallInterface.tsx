@@ -8,6 +8,7 @@ import {
   useMemo,
   type PointerEvent as ReactPointerEvent,
 } from 'react';
+import Image from 'next/image';
 import {
   startRecording,
   stopRecording,
@@ -247,7 +248,8 @@ export default function CallInterface() {
       const total =
         mediaItemCount > 0 ? mediaItemCount : MEDIA_CARD_PLACEHOLDERS.length;
       if (total <= 0) return 0;
-      return (prev + 1) % total;
+      // No circular navigation - stop at last item
+      return Math.min(prev + 1, total - 1);
     });
   }, [mediaItemCount]);
 
@@ -256,7 +258,8 @@ export default function CallInterface() {
       const total =
         mediaItemCount > 0 ? mediaItemCount : MEDIA_CARD_PLACEHOLDERS.length;
       if (total <= 0) return 0;
-      return (prev - 1 + total) % total;
+      // No circular navigation - stop at first item
+      return Math.max(prev - 1, 0);
     });
   }, [mediaItemCount]);
 
@@ -903,6 +906,10 @@ export default function CallInterface() {
                 content: fullExpertResponse,
                 timestamp: new Date(),
               }));
+
+              // Update media context and trigger preview fetch
+              mediaContextRef.current.responsePreview = fullExpertResponse;
+              triggerMediaFetch('preview');
             }
             break;
           case 'audio_chunk':
@@ -922,6 +929,10 @@ export default function CallInterface() {
                 content: fullExpertResponse,
                 timestamp: new Date(),
               }));
+
+              // Final media fetch with complete response
+              mediaContextRef.current.responsePreview = fullExpertResponse;
+              triggerMediaFetch('final');
             }
             break;
           case 'error':
@@ -1026,6 +1037,9 @@ export default function CallInterface() {
     setStatus,
     stopPlayback,
     updateMessage,
+    abortPendingMediaRequest,
+    resetMedia,
+    triggerMediaFetch,
   ]);
 
   useEffect(() => {
@@ -1097,11 +1111,9 @@ export default function CallInterface() {
     ? 'Starting...'
     : 'Start Call';
 
-  const previousMediaIndex =
-    (activeMediaIndex - 1 + MEDIA_CARD_PLACEHOLDERS.length) %
-    MEDIA_CARD_PLACEHOLDERS.length;
-  const nextMediaIndex =
-    (activeMediaIndex + 1) % MEDIA_CARD_PLACEHOLDERS.length;
+  const totalMediaItems = mediaItems.length > 0 ? mediaItems.length : MEDIA_CARD_PLACEHOLDERS.length;
+  const canGoToPrevious = activeMediaIndex > 0;
+  const canGoToNext = activeMediaIndex < totalMediaItems - 1;
 
   return (
     <div className="relative min-h-screen bg-slate-950 text-gray-100 lg:flex lg:h-screen lg:flex-col lg:overflow-hidden">
@@ -1153,48 +1165,200 @@ export default function CallInterface() {
             </svg>
           </div>
           <div className="relative z-10 flex h-full flex-col p-16 text-white">
-            <div
-              className="relative flex flex-1 items-center justify-center select-none cursor-grab active:cursor-grabbing touch-pan-y"
-              onPointerDown={handleMediaPointerDown}
-              onPointerUp={handleMediaPointerUp}
-              onPointerCancel={handleMediaPointerCancel}
-              role="presentation"
-            >
-              {MEDIA_CARD_PLACEHOLDERS.map((card, index) => {
-                const isActive = index === activeMediaIndex;
-                const isPrevious = index === previousMediaIndex;
-                const isNext = index === nextMediaIndex;
+            <div className="relative flex flex-1 items-center justify-center">
+              {/* Left navigation button */}
+              {canGoToPrevious && (
+                <button
+                  onClick={goToPreviousMediaCard}
+                  className="absolute left-0 top-1/2 z-40 -translate-y-1/2 rounded-full bg-white/20 p-3 backdrop-blur-md transition-all hover:bg-white/30 hover:scale-110 active:scale-95"
+                  aria-label="Previous image"
+                >
+                  <svg
+                    className="h-6 w-6 text-white"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M15 19l-7-7 7-7"
+                    />
+                  </svg>
+                </button>
+              )}
 
-                let positionClasses =
-                  'pointer-events-none opacity-0 scale-90 translate-x-0 z-0';
+              <div
+                className="relative flex flex-1 items-center justify-center select-none cursor-grab active:cursor-grabbing touch-pan-y"
+                onPointerDown={handleMediaPointerDown}
+                onPointerUp={handleMediaPointerUp}
+                onPointerCancel={handleMediaPointerCancel}
+                role="presentation"
+              >
+                {(mediaItems.length > 0 ? mediaItems : MEDIA_CARD_PLACEHOLDERS).map((item, index) => {
+                const isActive = index === activeMediaIndex;
+
+                let positionClasses = 'pointer-events-none';
+                let positionStyles: React.CSSProperties = {};
 
                 if (isActive) {
-                  positionClasses =
-                    'pointer-events-auto z-30 translate-x-0 scale-100 opacity-100 shadow-2xl shadow-black/40';
-                } else if (isPrevious) {
-                  positionClasses =
-                    'pointer-events-none z-20 -translate-x-[55%] scale-[0.95] opacity-80 shadow-xl shadow-black/25';
-                } else if (isNext) {
-                  positionClasses =
-                    'pointer-events-none z-20 translate-x-[55%] scale-[0.95] opacity-80 shadow-xl shadow-black/25';
+                  // Center active card
+                  positionClasses = 'pointer-events-auto shadow-2xl shadow-black/40';
+                  positionStyles = {
+                    transform: 'translateX(0) scale(1)',
+                    opacity: 1,
+                    zIndex: 30,
+                  };
+                } else if (index < activeMediaIndex) {
+                  // Cards that have already been shown - stack on LEFT side
+                  // Only show the last 2 cards that were viewed
+                  const offset = activeMediaIndex - index;
+
+                  if (offset > 2) {
+                    // Hide cards beyond the last 2 viewed
+                    positionClasses = 'pointer-events-none';
+                    positionStyles = {
+                      transform: 'translateX(-80%) scale(0.75)',
+                      opacity: 0,
+                      zIndex: 0,
+                    };
+                  } else {
+                    // Show last 2 viewed cards, stacked on left
+                    const translateX = -40 - (offset - 1) * 12; // Stack with offset to left
+                    const scale = 0.88 - (offset - 1) * 0.06;
+                    const opacity = 0.7 - (offset - 1) * 0.2;
+
+                    positionClasses = 'pointer-events-none shadow-lg shadow-black/20';
+                    positionStyles = {
+                      transform: `translateX(${translateX}%) scale(${scale})`,
+                      opacity: opacity,
+                      zIndex: 20 - offset,
+                    };
+                  }
+                } else {
+                  // Cards waiting to be shown - stack on RIGHT side
+                  // Only show the first 2 cards in the queue
+                  const offset = index - activeMediaIndex;
+
+                  if (offset > 2) {
+                    // Hide cards beyond the first 2 in queue
+                    positionClasses = 'pointer-events-none';
+                    positionStyles = {
+                      transform: 'translateX(80%) scale(0.75)',
+                      opacity: 0,
+                      zIndex: 0,
+                    };
+                  } else {
+                    // Show first 2 cards in queue, stacked on right
+                    const translateX = 40 + (offset - 1) * 12; // Stack with offset to right
+                    const scale = 0.88 - (offset - 1) * 0.06;
+                    const opacity = 0.7 - (offset - 1) * 0.2;
+
+                    positionClasses = 'pointer-events-none shadow-lg shadow-black/20';
+                    positionStyles = {
+                      transform: `translateX(${translateX}%) scale(${scale})`,
+                      opacity: opacity,
+                      zIndex: 20 - offset,
+                    };
+                  }
                 }
 
                 const backgroundGradient = isActive
                   ? 'from-white/40 via-white/20 to-white/10'
                   : 'from-white/20 via-white/10 to-white/5';
 
+                const isMediaItem = 'imageUrl' in item;
+
                 return (
                   <div
-                    key={card.id}
-                    className={`absolute flex h-[36rem] w-full max-w-[28rem] items-center justify-center rounded-[2.5rem] border border-white/25 bg-gradient-to-br ${backgroundGradient} backdrop-blur-xl transition-all duration-500 ease-out ${positionClasses}`}
+                    key={isMediaItem ? item.id : (item as typeof MEDIA_CARD_PLACEHOLDERS[number]).id}
+                    className={`absolute flex h-[36rem] w-full max-w-[28rem] overflow-hidden rounded-[2.5rem] border border-white/25 transition-all duration-500 ease-out ${positionClasses}`}
+                    style={positionStyles}
                     aria-hidden={!isActive}
                   >
-                    <span className="text-sm font-semibold uppercase tracking-[0.3em] text-white/70">
-                      {card.label}
-                    </span>
+                    {isMediaItem ? (
+                      <div className="relative h-full w-full bg-slate-900">
+                        <Image
+                          src={item.imageUrl}
+                          alt={item.caption}
+                          fill
+                          className="object-contain"
+                          sizes="(max-width: 768px) 100vw, 28rem"
+                          priority={isActive}
+                        />
+                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/60 to-transparent px-6 pb-6 pt-20">
+                          <p className="text-sm font-medium leading-relaxed text-white drop-shadow-lg">
+                            {item.caption}
+                          </p>
+                          {item.attribution && (
+                            <p className="mt-2 text-xs text-white/70 drop-shadow">
+                              {item.attribution}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className={`flex h-full w-full items-center justify-center bg-gradient-to-br ${backgroundGradient} backdrop-blur-xl`}>
+                        {isMediaLoading ? (
+                          <div className="flex flex-col items-center gap-4">
+                            <div className="h-12 w-12 animate-spin rounded-full border-4 border-white/20 border-t-white/80" />
+                            <span className="text-sm font-semibold uppercase tracking-[0.3em] text-white/70">
+                              Loading...
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-sm font-semibold uppercase tracking-[0.3em] text-white/70">
+                            {(item as typeof MEDIA_CARD_PLACEHOLDERS[number]).label}
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}
+              </div>
+
+              {/* Right navigation button */}
+              {canGoToNext && (
+                <button
+                  onClick={goToNextMediaCard}
+                  className="absolute right-0 top-1/2 z-40 -translate-y-1/2 rounded-full bg-white/20 p-3 backdrop-blur-md transition-all hover:bg-white/30 hover:scale-110 active:scale-95"
+                  aria-label="Next image"
+                >
+                  <svg
+                    className="h-6 w-6 text-white"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M9 5l7 7-7 7"
+                    />
+                  </svg>
+                </button>
+              )}
+
+              {/* Instagram-style dots indicator */}
+              {totalMediaItems > 1 && (
+                <div className="absolute bottom-6 left-1/2 z-40 flex -translate-x-1/2 gap-2">
+                  {Array.from({ length: totalMediaItems }).map((_, index) => (
+                    <button
+                      key={index}
+                      onClick={() => setActiveMediaIndex(index)}
+                      className={`h-2 rounded-full transition-all duration-300 ${
+                        index === activeMediaIndex
+                          ? 'w-8 bg-white'
+                          : 'w-2 bg-white/40 hover:bg-white/60'
+                      }`}
+                      aria-label={`Go to image ${index + 1}`}
+                    />
+                  ))}
+                </div>
+              )}
             </div>
             <div className="mt-16 rounded-3xl border border-white/20 bg-white/10 p-8 backdrop-blur-md">
               <div className="flex items-center justify-between">
