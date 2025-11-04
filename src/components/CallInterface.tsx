@@ -17,6 +17,7 @@ import { Message } from '@/types';
 import { useCallStore } from '@/lib/store';
 import ExpertBadge from '@/components/ExpertBadge';
 import MessageBubble from '@/components/MessageBubble';
+import { StreamingAudioPlayer } from '@/lib/streaming-audio-player';
 
 type CallStatus = 'idle' | 'listening' | 'processing' | 'speaking';
 
@@ -28,19 +29,26 @@ type StartCallResponse = {
   error?: string;
 };
 
-type CallMessageResponse = {
-  success?: boolean;
-  transcript?: string;
-  expert?: {
-    name: string;
-    expertiseAreas?: string[];
-    reasoning?: string;
-  };
-  responseText?: string;
-  audioBase64?: string;
-  error?: string;
-  details?: string;
-};
+type StreamResponseMessage =
+  | {
+      type: 'metadata';
+      transcript: string;
+      expert?: {
+        name: string;
+        expertiseAreas?: string[];
+        reasoning?: string;
+      };
+    }
+  | { type: 'text_delta'; delta: string }
+  | {
+      type: 'audio_chunk';
+      index: number;
+      text: string;
+      audioBase64: string;
+    }
+  | { type: 'complete'; text: string; processingTimeMs?: number }
+  | { type: 'error'; message: string }
+  | { type: 'done' };
 
 function createMessageId(): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
@@ -102,6 +110,7 @@ export default function CallInterface() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const sessionIdRef = useRef<string | null>(null);
   const playbackAbortRef = useRef<AbortController | null>(null);
+  const streamingPlayerRef = useRef<StreamingAudioPlayer | null>(null);
   const isHoldingRef = useRef(false);
   const errorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -181,11 +190,19 @@ export default function CallInterface() {
     [addMessage],
   );
 
+  const getStreamingPlayer = useCallback(() => {
+    if (!streamingPlayerRef.current) {
+      streamingPlayerRef.current = new StreamingAudioPlayer();
+    }
+    return streamingPlayerRef.current;
+  }, []);
+
   const stopPlayback = useCallback(() => {
     if (playbackAbortRef.current) {
       playbackAbortRef.current.abort();
       playbackAbortRef.current = null;
     }
+    streamingPlayerRef.current?.stop();
   }, []);
 
   const setStatus = useCallback(
@@ -459,6 +476,12 @@ export default function CallInterface() {
     mediaRecorderRef.current = null;
 
     let processingMessageId: string | null = null;
+    let expertMessageId: string | null = null;
+    let streamingError: string | null = null;
+    let fullExpertResponse = '';
+    const responseAbortController = new AbortController();
+    let hasStartedSpeaking = false;
+
     try {
       setStatus('processing');
       const audioBlob = await stopRecording(recorder);
@@ -480,91 +503,220 @@ export default function CallInterface() {
         timestamp: new Date(),
       });
 
+      stopPlayback();
+      playbackAbortRef.current = responseAbortController;
+
       const response = await fetch('/api/call/message', {
         method: 'POST',
         body: formData,
+        signal: responseAbortController.signal,
       });
 
-      let data: CallMessageResponse = {};
-      try {
-        data = (await response.json()) as CallMessageResponse;
-      } catch {
-        // ignore parse errors, handled below.
+      if (!response.ok) {
+        let errorMessage = `Failed to process question (status ${response.status}).`;
+        try {
+          const errorJson = await response.json();
+          if (typeof errorJson?.error === 'string') {
+            errorMessage = errorJson.error;
+          } else if (typeof errorJson?.details === 'string') {
+            errorMessage = errorJson.details;
+          }
+        } catch {
+          // ignore JSON parse failure and fall back to default message
+        }
+        throw new Error(errorMessage);
       }
 
-      if (
-        !response.ok ||
-        !data?.success ||
-        typeof data.transcript !== 'string' ||
-        typeof data.responseText !== 'string' ||
-        typeof data.audioBase64 !== 'string'
-      ) {
-        const errMessage =
-          data?.error ??
-          data?.details ??
-          `Failed to process question (status ${response.status}).`;
-        throw new Error(errMessage);
+      const contentType = response.headers.get('content-type') ?? '';
+      if (!response.body || !contentType.includes('application/x-ndjson')) {
+        let fallbackError = 'Unexpected response from server.';
+        try {
+          const fallbackJson = await response.json();
+          fallbackError =
+            (typeof fallbackJson?.error === 'string' && fallbackJson.error) ||
+            (typeof fallbackJson?.details === 'string' && fallbackJson.details) ||
+            fallbackError;
+        } catch {
+          // ignore parse errors
+        }
+        throw new Error(fallbackError);
       }
 
-      const cleanedTranscript = (data.transcript ?? '').trim();
-      if (!cleanedTranscript) {
-        handleError(new Error('No speech detected'), 'transcribe');
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      let transcriptAdded = false;
+
+      let playbackQueue: Promise<void> = Promise.resolve();
+
+      const enqueuePlayback = (audioBase64: string) => {
+        playbackQueue = playbackQueue.then(async () => {
+          if (responseAbortController.signal.aborted) {
+            return;
+          }
+          if (!hasStartedSpeaking) {
+            hasStartedSpeaking = true;
+            setStatus('speaking');
+          }
+          try {
+            await getStreamingPlayer().enqueue(
+              audioBase64,
+              responseAbortController.signal,
+            );
+          } catch (playbackError) {
+            if (
+              playbackError instanceof DOMException &&
+              playbackError.name === 'AbortError'
+            ) {
+              return;
+            }
+            throw playbackError;
+          }
+        });
+      };
+
+      const handleMetadata = (payload: Extract<StreamResponseMessage, { type: 'metadata' }>) => {
+        const cleanedTranscript = (payload.transcript ?? '').trim();
+
         if (processingMessageId) {
-          updateMessage(processingMessageId, message => ({
-            ...message,
-            content:
-              "I didn't catch anything there. Try holding the button and speaking again.",
+          removeMessage(processingMessageId);
+          processingMessageId = null;
+        }
+
+        if (cleanedTranscript) {
+          addMessage({
+            id: createMessageId(),
+            role: 'user',
+            content: cleanedTranscript,
             timestamp: new Date(),
-          }));
+          });
+          transcriptAdded = true;
         } else {
           addSystemMessage(
             "I didn't catch anything there. Try holding the button and speaking again.",
           );
         }
+
+        if (payload.expert) {
+          setCurrentExpert({
+            name: payload.expert.name,
+            expertiseAreas: payload.expert.expertiseAreas,
+            reasoning: payload.expert.reasoning,
+          });
+        }
+
+        expertMessageId = createMessageId();
+        addMessage({
+          id: expertMessageId,
+          role: 'expert',
+          content: '',
+          timestamp: new Date(),
+          expertName: payload.expert?.name ?? currentExpert?.name,
+        });
+      };
+
+      const processLine = (line: string) => {
+        if (!line) return;
+
+        let payload: StreamResponseMessage;
+        try {
+          payload = JSON.parse(line) as StreamResponseMessage;
+        } catch (parseError) {
+          console.warn('Failed to parse stream payload:', parseError, line);
+          return;
+        }
+
+        switch (payload.type) {
+          case 'metadata':
+            handleMetadata(payload);
+            break;
+          case 'text_delta':
+            if (expertMessageId && typeof payload.delta === 'string') {
+              fullExpertResponse += payload.delta;
+              updateMessage(expertMessageId, message => ({
+                ...message,
+                content: fullExpertResponse,
+                timestamp: new Date(),
+              }));
+            }
+            break;
+          case 'audio_chunk':
+            if (typeof payload.audioBase64 === 'string') {
+              enqueuePlayback(payload.audioBase64);
+            }
+            break;
+          case 'complete':
+            if (
+              expertMessageId &&
+              typeof payload.text === 'string' &&
+              payload.text
+            ) {
+              fullExpertResponse = payload.text;
+              updateMessage(expertMessageId, message => ({
+                ...message,
+                content: fullExpertResponse,
+                timestamp: new Date(),
+              }));
+            }
+            break;
+          case 'error':
+            streamingError =
+              payload.message ?? 'Processing failed. Please try again.';
+            break;
+          case 'done':
+          default:
+            break;
+        }
+      };
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        let newlineIndex = buffer.indexOf('\n');
+        while (newlineIndex !== -1) {
+          const line = buffer.slice(0, newlineIndex).trim();
+          buffer = buffer.slice(newlineIndex + 1);
+          processLine(line);
+          newlineIndex = buffer.indexOf('\n');
+        }
+      }
+
+      buffer += decoder.decode();
+      const remaining = buffer.trim();
+      if (remaining) {
+        processLine(remaining);
+      }
+
+      await playbackQueue;
+
+      if (responseAbortController.signal.aborted) {
+        return;
+      }
+
+      if (!transcriptAdded) {
+        addSystemMessage(
+          "I didn't catch anything there. Try holding the button and speaking again.",
+        );
+      }
+
+      if (streamingError) {
+        throw new Error(streamingError);
+      }
+
+      const nextStatus = isHoldingRef.current ? 'listening' : 'idle';
+      setStatus(nextStatus);
+    } catch (err) {
+      if (
+        err instanceof DOMException &&
+        err.name === 'AbortError'
+      ) {
         setStatus('idle');
         return;
       }
 
-      if (data.expert) {
-        setCurrentExpert(data.expert);
-      }
-
-      if (processingMessageId) {
-        removeMessage(processingMessageId);
-      }
-
-      addMessage({
-        id: createMessageId(),
-        role: 'user',
-        content: cleanedTranscript,
-        timestamp: new Date(),
-      });
-
-      addMessage({
-        id: createMessageId(),
-        role: 'expert',
-        content: data.responseText ?? '',
-        timestamp: new Date(),
-        expertName: data.expert?.name ?? currentExpert?.name,
-      });
-
-      const responseAudio = base64ToBlob(data.audioBase64, 'audio/mpeg');
-      stopPlayback();
-      setStatus('speaking');
-      const responseAbortController = new AbortController();
-      playbackAbortRef.current = responseAbortController;
-      try {
-        await playAudio(responseAudio, {
-          signal: responseAbortController.signal,
-        });
-      } finally {
-        if (playbackAbortRef.current === responseAbortController) {
-          playbackAbortRef.current = null;
-        }
-      }
-      const nextStatus = isHoldingRef.current ? 'listening' : 'idle';
-      setStatus(nextStatus);
-    } catch (err) {
       handleError(err, 'transcribe');
 
       if (processingMessageId) {
@@ -577,12 +729,32 @@ export default function CallInterface() {
       } else {
         addSystemMessage('Processing failed. Please try again.');
       }
+
+      if (expertMessageId) {
+        updateMessage(expertMessageId, message => ({
+          ...message,
+          content:
+            message.content ||
+            'There was an issue generating a response. Please try again.',
+          timestamp: new Date(),
+        }));
+      }
+
       setStatus('idle');
+    } finally {
+      if (playbackAbortRef.current === responseAbortController) {
+        playbackAbortRef.current = null;
+      }
+
+      if (!hasStartedSpeaking && !isHoldingRef.current) {
+        setStatus('idle');
+      }
     }
   }, [
     addMessage,
     addSystemMessage,
     currentExpert,
+    getStreamingPlayer,
     handleError,
     isHolding,
     removeMessage,
@@ -596,6 +768,10 @@ export default function CallInterface() {
     return () => {
       cancelActiveRecording();
       stopPlayback();
+      if (streamingPlayerRef.current) {
+        streamingPlayerRef.current.dispose();
+        streamingPlayerRef.current = null;
+      }
       if (errorTimeoutRef.current) {
         clearTimeout(errorTimeoutRef.current);
       }

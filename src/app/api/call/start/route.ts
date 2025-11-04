@@ -5,6 +5,8 @@ import path from 'path';
 import { generateSpeech } from '@/lib/elevenlabs';
 import { createSession } from '@/lib/sessions';
 
+export const runtime = 'nodejs';
+
 const CONCIERGE_VOICE_ID =
   process.env.ELEVENLABS_CONCIERGE_VOICE_ID ?? 'EXAVITQu4vr4xnSDxMaL';
 const GREETING_TEXT =
