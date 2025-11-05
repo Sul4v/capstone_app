@@ -6,6 +6,7 @@ export interface Message {
   timestamp: Date;
   persona?: string; // ID of the persona that sent/received this message
   expertName?: string;
+  mediaItems?: MediaItem[]; // Media items linked to this message
 }
 
 // Persona interface - defines a conversation persona with voice and personality traits
@@ -18,6 +19,15 @@ export interface Persona {
   voiceId: string; // ElevenLabs voice ID
 }
 
+// Portrait metadata interface
+export interface Portrait {
+  url: string;
+  source: 'wikipedia' | 'manual' | 'placeholder';
+  attribution?: string;
+  license?: string;
+  thumbnailUrl?: string;
+}
+
 // Expert interface - represents a routed subject matter expert for a session
 export interface Expert {
   id?: string;
@@ -28,6 +38,7 @@ export interface Expert {
   reasoning?: string;
   voiceId?: string;
   gender?: 'male' | 'female' | 'neutral' | 'unknown';
+  portrait?: Portrait;
 }
 
 // Session interface - maintains per-call context including assigned expert
@@ -59,7 +70,8 @@ export interface CallState {
   isProcessing: boolean;
   isSpeaking: boolean;
   error: string | null;
-  mediaItems: MediaItem[];
+  mediaItems: MediaItem[]; // Currently displayed media items
   isMediaLoading: boolean;
   mediaError: string | null;
+  selectedMessageId: string | null; // ID of message whose media is displayed
 }

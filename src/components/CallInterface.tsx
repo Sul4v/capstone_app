@@ -15,11 +15,12 @@ import {
   isAudioRecordingSupported,
   playAudio,
 } from '@/lib/audio-utils';
-import { Message, MediaItem } from '@/types';
+import { Message, MediaItem, Portrait } from '@/types';
 import { useCallStore } from '@/lib/store';
 import ExpertBadge from '@/components/ExpertBadge';
 import MessageBubble from '@/components/MessageBubble';
 import { StreamingAudioPlayer } from '@/lib/streaming-audio-player';
+import AnimatedPortrait from '@/components/AnimatedPortrait';
 
 type CallStatus = 'idle' | 'listening' | 'processing' | 'speaking';
 
@@ -116,6 +117,7 @@ export default function CallInterface() {
     setMediaItems,
     setIsMediaLoading,
     setMediaError,
+    setSelectedMessageId,
     resetMedia,
   } = useCallStore();
 
@@ -126,6 +128,9 @@ export default function CallInterface() {
   const [mediaPointerStartX, setMediaPointerStartX] = useState<number | null>(
     null,
   );
+  const [expertPortrait, setExpertPortrait] = useState<Portrait | null>(null);
+  const [isPortraitLoading, setIsPortraitLoading] = useState(false);
+  const lastFetchedExpertRef = useRef<string | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -168,6 +173,47 @@ export default function CallInterface() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [conversationHistory]);
+
+  // Fetch expert portrait when expert changes
+  useEffect(() => {
+    const fetchPortrait = async () => {
+      if (!currentExpert?.name) {
+        setExpertPortrait(null);
+        lastFetchedExpertRef.current = null;
+        return;
+      }
+
+      // Skip if we already fetched this expert
+      if (lastFetchedExpertRef.current === currentExpert.name) {
+        return;
+      }
+
+      lastFetchedExpertRef.current = currentExpert.name;
+      setIsPortraitLoading(true);
+
+      try {
+        const response = await fetch(
+          `/api/expert/portrait?name=${encodeURIComponent(currentExpert.name)}`,
+        );
+
+        if (!response.ok) {
+          throw new Error('Failed to fetch portrait');
+        }
+
+        const data = await response.json();
+        if (data.success && data.portrait) {
+          setExpertPortrait(data.portrait);
+        }
+      } catch (error) {
+        console.error('Error fetching expert portrait:', error);
+        setExpertPortrait(null);
+      } finally {
+        setIsPortraitLoading(false);
+      }
+    };
+
+    fetchPortrait();
+  }, [currentExpert?.name]);
 
   const clearErrorLater = useCallback(() => {
     if (errorTimeoutRef.current) {
@@ -341,7 +387,7 @@ export default function CallInterface() {
   }, []);
 
   const triggerMediaFetch = useCallback(
-    (reason: 'preview' | 'final') => {
+    (reason: 'preview' | 'final', messageId: string) => {
       const context = mediaContextRef.current;
       const trimmedResponse = context.responsePreview.trim();
 
@@ -386,7 +432,7 @@ export default function CallInterface() {
         responsePreview: trimmedResponse,
         expertName: context.expertName || undefined,
         expertiseAreas: context.expertiseAreas ?? undefined,
-        limit: 5,
+        limit: 3, // Changed from 5 to 3
       };
 
       const run = async () => {
@@ -415,7 +461,17 @@ export default function CallInterface() {
           if (controller.signal.aborted) return;
 
           const items = Array.isArray(data.items) ? data.items : [];
+
+          // Store media items in the message
+          updateMessage(messageId, (message) => ({
+            ...message,
+            mediaItems: items,
+          }));
+
+          // Display media for this message
           setMediaItems(items);
+          setSelectedMessageId(messageId);
+
           lastMediaRequestLengthRef.current = trimmedResponse.length;
         } catch (error) {
           if (controller.signal.aborted) return;
@@ -436,7 +492,14 @@ export default function CallInterface() {
         console.error('Unexpected media fetch error:', error);
       });
     },
-    [abortPendingMediaRequest, setIsMediaLoading, setMediaError, setMediaItems],
+    [
+      abortPendingMediaRequest,
+      setIsMediaLoading,
+      setMediaError,
+      setMediaItems,
+      setSelectedMessageId,
+      updateMessage,
+    ],
   );
 
   const setStatus = useCallback(
@@ -562,6 +625,7 @@ export default function CallInterface() {
       sessionIdRef.current = newSessionId;
       setSessionId(newSessionId);
       setIsActive(true);
+      setIsStartLoading(false); // Allow user to interact immediately
 
       addSystemMessage('Call connected. Playing concierge greeting...');
 
@@ -672,6 +736,7 @@ export default function CallInterface() {
 
     try {
       setError(null);
+      // Stop any currently playing audio (including greeting)
       stopPlayback();
       setIsHolding(true);
       isHoldingRef.current = true;
@@ -681,7 +746,12 @@ export default function CallInterface() {
       mediaRecorderRef.current = recorder;
       recorder.start();
 
-      addSystemMessage('Recording... release to send your question.');
+      // Clear any greeting message if we're interrupting it
+      if (callStatus === 'speaking') {
+        addSystemMessage('Greeting interrupted. Recording your question...');
+      } else {
+        addSystemMessage('Recording... release to send your question.');
+      }
     } catch (err) {
       handleError(err, 'recording');
       setIsHolding(false);
@@ -909,7 +979,9 @@ export default function CallInterface() {
 
               // Update media context and trigger preview fetch
               mediaContextRef.current.responsePreview = fullExpertResponse;
-              triggerMediaFetch('preview');
+              if (expertMessageId) {
+                triggerMediaFetch('preview', expertMessageId);
+              }
             }
             break;
           case 'audio_chunk':
@@ -932,7 +1004,9 @@ export default function CallInterface() {
 
               // Final media fetch with complete response
               mediaContextRef.current.responsePreview = fullExpertResponse;
-              triggerMediaFetch('final');
+              if (expertMessageId) {
+                triggerMediaFetch('final', expertMessageId);
+              }
             }
             break;
           case 'error':
@@ -1102,7 +1176,7 @@ export default function CallInterface() {
       ? 'Listening in real time...'
       : callStatus === 'processing'
       ? 'Transcribing and analyzing your audio...'
-      : "Responding with your concierge's answer.";
+      : "Responding with your concierge's answer. (Hold button to interrupt)";
 
   const isCallButtonDisabled = !isActive && isStartLoading;
   const callButtonLabel = isActive
@@ -1142,27 +1216,54 @@ export default function CallInterface() {
           <div className="absolute inset-0 bg-gradient-to-br from-indigo-600 via-blue-600 to-sky-500" />
           <div className="absolute -top-24 -left-32 h-[28rem] w-[28rem] rounded-full bg-white/20 blur-3xl" />
           <div className="absolute bottom-[-12rem] right-[-6rem] h-[34rem] w-[34rem] rounded-full bg-indigo-900/50 blur-3xl" />
-          <div className="absolute top-10 right-10 flex h-32 w-32 items-center justify-center rounded-full border border-white/30 bg-white/15 text-white/80 shadow-2xl backdrop-blur">
-            <span className="sr-only">Persona avatar placeholder</span>
-            <svg
-              className="h-14 w-14"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={1.6}
-              viewBox="0 0 24 24"
-              aria-hidden="true"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M12 12c2.485 0 4.5-2.015 4.5-4.5S14.485 3 12 3 7.5 5.015 7.5 7.5 9.515 12 12 12z"
-              />
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M5 19.25c0-2.623 3.134-4.75 7-4.75s7 2.127 7 4.75"
-              />
-            </svg>
+          <div
+            className="group absolute top-10 right-10 h-32 w-32 overflow-hidden rounded-full border border-white/30 shadow-2xl backdrop-blur"
+            title={expertPortrait?.attribution || undefined}
+          >
+            {expertPortrait?.url && !isPortraitLoading ? (
+              <>
+                <AnimatedPortrait
+                  imageUrl={expertPortrait.url}
+                  alt={currentExpert?.name || 'Expert portrait'}
+                  className="h-full w-full"
+                  intensity={0.6}
+                />
+                {expertPortrait.attribution && (
+                  <div className="absolute inset-x-0 bottom-0 translate-y-full bg-black/90 px-3 py-2 text-xs text-white opacity-0 transition-opacity group-hover:opacity-100">
+                    {expertPortrait.attribution}
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="flex h-full w-full items-center justify-center bg-white/15 text-white/80">
+                {isPortraitLoading ? (
+                  <div className="h-8 w-8 animate-spin rounded-full border-4 border-white/20 border-t-white/80" />
+                ) : (
+                  <>
+                    <span className="sr-only">Persona avatar placeholder</span>
+                    <svg
+                      className="h-14 w-14"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth={1.6}
+                      viewBox="0 0 24 24"
+                      aria-hidden="true"
+                    >
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M12 12c2.485 0 4.5-2.015 4.5-4.5S14.485 3 12 3 7.5 5.015 7.5 7.5 9.515 12 12 12z"
+                      />
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        d="M5 19.25c0-2.623 3.134-4.75 7-4.75s7 2.127 7 4.75"
+                      />
+                    </svg>
+                  </>
+                )}
+              </div>
+            )}
           </div>
           <div className="relative z-10 flex h-full flex-col p-16 text-white">
             <div className="relative flex flex-1 items-center justify-center">
@@ -1286,6 +1387,7 @@ export default function CallInterface() {
                           className="object-contain"
                           sizes="(max-width: 768px) 100vw, 28rem"
                           priority={isActive}
+                          unoptimized
                         />
                         <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/60 to-transparent px-6 pb-6 pt-20">
                           <p className="text-sm font-medium leading-relaxed text-white drop-shadow-lg">
@@ -1375,21 +1477,27 @@ export default function CallInterface() {
                 </div>
               </div>
               <div className="mt-8 flex h-32 items-end justify-between gap-1">
-                {[...Array(24)].map((_, i) => (
-                  <div
-                    key={i}
-                    className={`flex-1 rounded-full bg-gradient-to-t from-white/20 via-white/60 to-white transition-all duration-300 ${
-                      callStatus === 'listening' ? 'animate-wave' : ''
-                    }`}
-                    style={{
-                      height:
-                        callStatus === 'listening'
-                          ? `${30 + Math.random() * 60}%`
-                          : `${15 + Math.random() * 20}%`,
-                      animationDelay: `${i * 0.05}s`,
-                    }}
-                  />
-                ))}
+                {[...Array(24)].map((_, i) => {
+                  // Use deterministic heights based on index to avoid hydration mismatch
+                  const baseHeight = 15 + ((i * 7) % 20);
+                  const listeningHeight = 30 + ((i * 13) % 60);
+
+                  return (
+                    <div
+                      key={i}
+                      className={`flex-1 rounded-full bg-gradient-to-t from-white/20 via-white/60 to-white transition-all duration-300 ${
+                        callStatus === 'listening' ? 'animate-wave' : ''
+                      }`}
+                      style={{
+                        height:
+                          callStatus === 'listening'
+                            ? `${listeningHeight}%`
+                            : `${baseHeight}%`,
+                        animationDelay: `${i * 0.05}s`,
+                      }}
+                    />
+                  );
+                })}
               </div>
               <p className="mt-6 text-xs font-medium text-white/70">
                 {statusHelperText}
@@ -1489,7 +1597,23 @@ export default function CallInterface() {
                     </p>
                   ) : (
                     conversationHistory.map(message => (
-                      <MessageBubble key={message.id} message={message} />
+                      <div
+                        key={message.id}
+                        onClick={() => {
+                          // Show media for this message if it has any
+                          if (message.mediaItems && message.mediaItems.length > 0) {
+                            setMediaItems(message.mediaItems);
+                            setSelectedMessageId(message.id);
+                          }
+                        }}
+                        className={
+                          message.mediaItems && message.mediaItems.length > 0
+                            ? 'cursor-pointer'
+                            : ''
+                        }
+                      >
+                        <MessageBubble message={message} />
+                      </div>
                     ))
                   )}
                 </div>

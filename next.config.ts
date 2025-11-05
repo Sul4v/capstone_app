@@ -36,6 +36,22 @@ const nextConfig: NextConfig = {
         protocol: 'https',
         hostname: '*.pexels.com',
       },
+      {
+        protocol: 'https',
+        hostname: 'upload.wikimedia.org',
+      },
+      {
+        protocol: 'https',
+        hostname: '*.wikimedia.org',
+      },
+      {
+        protocol: 'https',
+        hostname: 'www.thecode.xyz',
+      },
+      {
+        protocol: 'https',
+        hostname: 'starbeamrainbowlabs.com',
+      },
       // Allow all HTTPS images (needed for Google Image Search results from any domain)
       {
         protocol: 'https',

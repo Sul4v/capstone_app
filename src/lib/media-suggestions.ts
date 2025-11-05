@@ -25,19 +25,19 @@ Given a user's question and the expert's response, generate 2-3 concise image se
 For each query:
 1. The search query should be specific and likely to return relevant conceptual images
 2. The caption should be brief (8-12 words max) and explain what the image illustrates
-3. Focus on diagrams, concepts, processes, or visual representations rather than generic stock photos
+3. Focus on concepts, processes, or visual representations rather than generic stock photos
 
 IMPORTANT: You MUST return ONLY a valid JSON array of objects with "query" and "caption" fields. Do not include any explanatory text before or after the JSON.
 
 Example format (return exactly this structure):
 [
   {
-    "query": "JavaScript event loop diagram visualization",
-    "caption": "How the JavaScript event loop processes asynchronous code"
+    "query": "query for an image",
+    "caption": "caption for the image"
   },
   {
-    "query": "call stack heap memory structure",
-    "caption": "Memory allocation in JavaScript runtime environment"
+    "query": "query for an image",
+    "caption": "caption for the image"
   }
 ]`;
 

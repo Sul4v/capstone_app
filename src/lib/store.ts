@@ -16,6 +16,7 @@ interface CallStore extends CallState {
   setMediaItems: (items: MediaItem[]) => void;
   setIsMediaLoading: (loading: boolean) => void;
   setMediaError: (error: string | null) => void;
+  setSelectedMessageId: (id: string | null) => void;
   resetMedia: () => void;
   reset: () => void;
 }
@@ -32,6 +33,7 @@ const getInitialState = (): CallState => ({
   mediaItems: [],
   isMediaLoading: false,
   mediaError: null,
+  selectedMessageId: null,
 });
 
 export const useCallStore = create<CallStore>((set) => ({
@@ -64,11 +66,13 @@ export const useCallStore = create<CallStore>((set) => ({
   setMediaItems: (items) => set({ mediaItems: items }),
   setIsMediaLoading: (loading) => set({ isMediaLoading: loading }),
   setMediaError: (error) => set({ mediaError: error }),
+  setSelectedMessageId: (id) => set({ selectedMessageId: id }),
   resetMedia: () =>
     set({
       mediaItems: [],
       isMediaLoading: false,
       mediaError: null,
+      selectedMessageId: null,
     }),
   reset: () => set(getInitialState()),
 }));

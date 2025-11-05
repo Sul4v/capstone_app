@@ -14,20 +14,9 @@ export async function routeToExpert(question: string): Promise<Expert> {
 
 Analyze the question and identify an actual, well-known software engineering expert who has deep expertise in this area. Consider their known specializations, contributions, and philosophies.
 
-Examples of experts in different areas:
-- React, JavaScript, Frontend: Dan Abramov, Kent C. Dodds, Theo Browne
-- Clean code, Architecture: Uncle Bob (Robert Martin), Martin Fowler
-- Testing, TDD: Kent Beck, Martin Fowler
-- DevOps, Kubernetes: Kelsey Hightower, Brendan Burns
-- Linux, Systems Programming: Linus Torvalds, Bryan Cantrill
-- Performance, Low-level: John Carmack, Casey Muratori
-- Python: Guido van Rossum, Raymond Hettinger
-- Databases: Martin Kleppmann, Joe Hellerstein
-- System Design: Alex Xu, Gaurav Sen
-- Security: Bruce Schneier, Troy Hunt
-- AI/ML: Andrew Ng, Yann LeCun
+Focus on the question and identify the most relevant expert.
 
-You can choose ANY real software engineering expert, not just from this list.
+Keep in consideration the timeframe of the question. As in, if the question talks about React, you should choose a expert that is familiar with React 19. not someone who is too old to know about React.
 
 Return ONLY valid JSON (no markdown, no code blocks):
 {
@@ -37,7 +26,7 @@ Return ONLY valid JSON (no markdown, no code blocks):
   "gender": "male" | "female" | "neutral"
 }
 
-If the question is too vague or general, choose a well-rounded expert like Martin Fowler or Uncle Bob.`;
+If the question is too vague or general, choose a well-rounded expert.`;
 
   try {
     const response = await openai.chat.completions.create({
