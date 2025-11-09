@@ -21,6 +21,8 @@ import ExpertBadge from '@/components/ExpertBadge';
 import MessageBubble from '@/components/MessageBubble';
 import { StreamingAudioPlayer } from '@/lib/streaming-audio-player';
 import AnimatedPortrait from '@/components/AnimatedPortrait';
+import VideoPortrait from '@/components/VideoPortrait';
+import { CONCIERGE_VIDEO_PATH, getPersonaVideoPath, checkVideoExists } from '@/lib/video-utils';
 
 type CallStatus = 'idle' | 'listening' | 'processing' | 'speaking';
 
@@ -130,6 +132,8 @@ export default function CallInterface() {
   );
   const [expertPortrait, setExpertPortrait] = useState<Portrait | null>(null);
   const [isPortraitLoading, setIsPortraitLoading] = useState(false);
+  const [personaVideoPath, setPersonaVideoPath] = useState<string | null>(null);
+  const [hasVideo, setHasVideo] = useState(false);
   const lastFetchedExpertRef = useRef<string | null>(null);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -213,6 +217,34 @@ export default function CallInterface() {
     };
 
     fetchPortrait();
+  }, [currentExpert?.name]);
+
+  // Check for video availability when expert changes or for concierge
+  useEffect(() => {
+    const checkVideo = async () => {
+      let videoPath: string | null = null;
+
+      // If no expert, use concierge video
+      if (!currentExpert?.name) {
+        videoPath = CONCIERGE_VIDEO_PATH;
+      } else {
+        // Check if expert has a video
+        videoPath = getPersonaVideoPath(currentExpert.name);
+      }
+
+      // Check if the video exists
+      const exists = await checkVideoExists(videoPath);
+
+      if (exists) {
+        setPersonaVideoPath(videoPath);
+        setHasVideo(true);
+      } else {
+        setPersonaVideoPath(null);
+        setHasVideo(false);
+      }
+    };
+
+    checkVideo();
   }, [currentExpert?.name]);
 
   const clearErrorLater = useCallback(() => {
@@ -1220,7 +1252,20 @@ export default function CallInterface() {
             className="group absolute top-10 right-10 h-32 w-32 overflow-hidden rounded-full border border-white/30 shadow-2xl backdrop-blur"
             title={expertPortrait?.attribution || undefined}
           >
-            {expertPortrait?.url && !isPortraitLoading ? (
+            {hasVideo && personaVideoPath ? (
+              // Use video if available
+              <VideoPortrait
+                videoSrc={personaVideoPath}
+                alt={currentExpert?.name || 'Concierge'}
+                size={128}
+                onError={() => {
+                  // If video fails to load, fall back to image
+                  setHasVideo(false);
+                  setPersonaVideoPath(null);
+                }}
+              />
+            ) : expertPortrait?.url && !isPortraitLoading ? (
+              // Fall back to animated portrait image
               <>
                 <AnimatedPortrait
                   imageUrl={expertPortrait.url}
@@ -1235,6 +1280,7 @@ export default function CallInterface() {
                 )}
               </>
             ) : (
+              // Final fallback to placeholder
               <div className="flex h-full w-full items-center justify-center bg-white/15 text-white/80">
                 {isPortraitLoading ? (
                   <div className="h-8 w-8 animate-spin rounded-full border-4 border-white/20 border-t-white/80" />
