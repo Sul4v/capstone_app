@@ -45,16 +45,12 @@ export function buildPersonaVideoStatus(
 
 export function queuePersonaVideoGeneration(
   expertName: string,
-  portraitUrl: string,
+  portraitUrl?: string,
 ): Promise<void> | null {
   const normalizedName = normalizeNameToFilename(expertName);
   const fileName = getVideoFileName(expertName);
 
   if (blockedPersonaVideoGenerations.has(normalizedName)) {
-    return null;
-  }
-
-  if (!portraitUrl || !/^https?:\/\//i.test(portraitUrl)) {
     return null;
   }
 
@@ -65,23 +61,28 @@ export function queuePersonaVideoGeneration(
 
   const generationPromise = (async () => {
     try {
-      // 1. Download Original Image
-      console.log(`[persona-video] Downloading original image for "${expertName}"...`);
-      const originalImage = await downloadImageBuffer(portraitUrl);
-      if (!originalImage) {
-        throw new Error('Could not download portrait image');
-      }
+      let visualDescription: string | null = null;
 
-      // 2. Analyze Image (Visual Description)
-      console.log(`[persona-video] Analyzing image for "${expertName}"...`);
-      const base64Image = originalImage.buffer.toString('base64');
-      const mimeType = originalImage.mimeType || 'image/jpeg';
-      const visualDescription = await describeImage(base64Image, mimeType);
+      if (portraitUrl && /^https?:\/\//i.test(portraitUrl)) {
+        // 1. Download Original Image
+        console.log(`[persona-video] Downloading original image for "${expertName}"...`);
+        const originalImage = await downloadImageBuffer(portraitUrl);
 
-      if (!visualDescription) {
-        console.warn(`[persona-video] Failed to describe image for "${expertName}". Using generic fallback.`);
+        if (originalImage) {
+          // 2. Analyze Image (Visual Description)
+          console.log(`[persona-video] Analyzing image for "${expertName}"...`);
+          const base64Image = originalImage.buffer.toString('base64');
+          const mimeType = originalImage.mimeType || 'image/jpeg';
+          visualDescription = await describeImage(base64Image, mimeType);
+
+          if (!visualDescription) {
+            console.warn(`[persona-video] Failed to describe image for "${expertName}". Using generic fallback.`);
+          } else {
+            console.log(`[persona-video] Generated visual description for "${expertName}"`);
+          }
+        }
       } else {
-        console.log(`[persona-video] Generated visual description for "${expertName}"`);
+        console.log(`[persona-video] No portrait URL for "${expertName}". Will generate lookalike from name only.`);
       }
 
       // 3. Generate Lookalike Image

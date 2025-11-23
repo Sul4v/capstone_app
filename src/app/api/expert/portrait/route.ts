@@ -34,8 +34,9 @@ export async function GET(request: Request): Promise<NextResponse> {
     const videoStatus = buildPersonaVideoStatus(hasVideo, portraitUrl);
     const videoPath = hasVideo ? getPersonaVideoPublicPath(expertName) : null;
 
-    if (!hasVideo && videoStatus === 'pending' && portraitUrl) {
-      queuePersonaVideoGeneration(expertName, portraitUrl);
+    if (!hasVideo && videoStatus === 'pending') {
+      // Trigger generation even if portraitUrl is missing (will use name-only fallback)
+      queuePersonaVideoGeneration(expertName, portraitUrl || '');
     }
 
     return NextResponse.json({
