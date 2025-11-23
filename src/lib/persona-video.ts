@@ -37,10 +37,9 @@ export function buildPersonaVideoStatus(
   if (exists) {
     return 'ready';
   }
-  if (portraitUrl && /^https?:\/\//i.test(portraitUrl)) {
-    return 'pending';
-  }
-  return 'missing';
+  // We now support generating videos even without a portrait (using lookalikes),
+  // so the status is always 'pending' if the video doesn't exist yet.
+  return 'pending';
 }
 
 export function queuePersonaVideoGeneration(
