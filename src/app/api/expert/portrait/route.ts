@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { waitUntil } from '@vercel/functions';
 import { getExpertPortrait } from '@/lib/wikipedia-portrait';
 import {
   buildPersonaVideoStatus,
@@ -36,7 +37,11 @@ export async function GET(request: Request): Promise<NextResponse> {
 
     if (!hasVideo && videoStatus === 'pending') {
       // Trigger generation even if portraitUrl is missing (will use name-only fallback)
-      queuePersonaVideoGeneration(expertName, portraitUrl || '');
+      // Use waitUntil to ensure background task survives response
+      const generationPromise = queuePersonaVideoGeneration(expertName, portraitUrl || '');
+      if (generationPromise) {
+        waitUntil(generationPromise);
+      }
     }
 
     return NextResponse.json({
