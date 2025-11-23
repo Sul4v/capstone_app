@@ -35,12 +35,18 @@ export async function GET(request: Request): Promise<NextResponse> {
     const videoStatus = buildPersonaVideoStatus(hasVideo, portraitUrl);
     const videoPath = hasVideo ? getPersonaVideoPublicPath(expertName) : null;
 
+    console.log(`[portrait] Expert: "${expertName}", HasVideo: ${hasVideo}, Status: ${videoStatus}`);
+
     if (!hasVideo && videoStatus === 'pending') {
+      console.log(`[portrait] Triggering video generation for "${expertName}"`);
       // Trigger generation even if portraitUrl is missing (will use name-only fallback)
       // Use waitUntil to ensure background task survives response
       const generationPromise = queuePersonaVideoGeneration(expertName, portraitUrl || '');
       if (generationPromise) {
+        console.log(`[portrait] Video generation queued (waitUntil)`);
         waitUntil(generationPromise);
+      } else {
+        console.log(`[portrait] Video generation skipped (already pending or blocked)`);
       }
     }
 

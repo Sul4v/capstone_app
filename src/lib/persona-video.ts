@@ -49,12 +49,16 @@ export function queuePersonaVideoGeneration(
   const normalizedName = normalizeNameToFilename(expertName);
   const fileName = getVideoFileName(expertName);
 
+  console.log(`[persona-video] queuePersonaVideoGeneration called for "${expertName}" (normalized: ${normalizedName})`);
+
   if (blockedPersonaVideoGenerations.has(normalizedName)) {
+    console.log(`[persona-video] Generation blocked for "${expertName}"`);
     return null;
   }
 
   const existing = pendingPersonaVideoGenerations.get(normalizedName);
   if (existing) {
+    console.log(`[persona-video] Generation already pending for "${expertName}"`);
     return existing;
   }
 
