@@ -106,14 +106,22 @@ class VercelBlobStorageService implements StorageService {
 
 // Factory to get the appropriate storage service
 function getStorageService(): StorageService {
-    const provider = process.env.STORAGE_PROVIDER || 'local';
+    const provider = process.env.STORAGE_PROVIDER;
+    const hasBlobToken = !!process.env.BLOB_READ_WRITE_TOKEN;
+    const isVercel = !!process.env.VERCEL;
+
+    console.log(`[Storage] Initializing. Provider: '${provider}', HasBlobToken: ${hasBlobToken}, IsVercel: ${isVercel}`);
 
     if (provider === 'vercel-blob') {
-        if (!process.env.BLOB_READ_WRITE_TOKEN) {
-            console.warn('[Storage] BLOB_READ_WRITE_TOKEN not set. Falling back to local storage.');
+        if (!hasBlobToken) {
+            console.error('[Storage] CRITICAL: STORAGE_PROVIDER is vercel-blob but BLOB_READ_WRITE_TOKEN is missing. Falling back to local storage (will fail in production).');
             return new LocalStorageService();
         }
         return new VercelBlobStorageService();
+    }
+
+    if (isVercel) {
+        console.warn('[Storage] WARNING: Running on Vercel but STORAGE_PROVIDER is not set to vercel-blob. This will likely cause errors as local filesystem is read-only.');
     }
 
     return new LocalStorageService();
