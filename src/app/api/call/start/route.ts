@@ -1,9 +1,8 @@
 import { randomUUID } from 'crypto';
 import { NextResponse } from 'next/server';
-import { promises as fs } from 'fs';
-import path from 'path';
 import { generateSpeech } from '@/lib/elevenlabs';
 import { createSession } from '@/lib/sessions';
+import { storage } from '@/lib/storage';
 
 export const runtime = 'nodejs';
 
@@ -11,28 +10,41 @@ const CONCIERGE_VOICE_ID =
   process.env.ELEVENLABS_CONCIERGE_VOICE_ID ?? 'EXAVITQu4vr4xnSDxMaL';
 const GREETING_TEXT =
   "Hello! I'm your AI concierge. I'm here to connect you with expert software engineers. What would you like to know about software engineering today?";
-const GREETING_CACHE_PATH = '/tmp/concierge-greeting.mp3';
+const GREETING_STORAGE_PATH = 'audio/concierge-greeting.mp3';
 
-async function getCachedGreeting(): Promise<Buffer | null> {
-  try {
-    const cached = await fs.readFile(GREETING_CACHE_PATH);
-    console.log('Using cached greeting');
-    return cached;
-  } catch {
-    return null;
-  }
-}
+// In-memory cache for hot execution
+let cachedGreetingBuffer: Buffer | null = null;
 
-async function cacheGreetingAudio(audio: Buffer): Promise<void> {
-  try {
-    const dir = path.dirname(GREETING_CACHE_PATH);
-    // /tmp should always exist, but just in case
-    await fs.mkdir(dir, { recursive: true });
-    await fs.writeFile(GREETING_CACHE_PATH, audio);
-    console.log('Cached greeting audio');
-  } catch (error) {
-    console.warn('Failed to cache greeting audio (non-fatal):', error);
+async function getGreeting(): Promise<Buffer> {
+  // 1. Check in-memory cache
+  if (cachedGreetingBuffer) {
+    console.log('Using in-memory cached greeting');
+    return cachedGreetingBuffer;
   }
+
+  // 2. Check persistent storage
+  const storedAudio = await storage.download(GREETING_STORAGE_PATH);
+  if (storedAudio) {
+    console.log('Using storage cached greeting');
+    cachedGreetingBuffer = storedAudio;
+    return storedAudio;
+  }
+
+  // 3. Generate new audio
+  console.log('Generating new greeting audio...');
+  const audio = await generateSpeech(GREETING_TEXT, CONCIERGE_VOICE_ID);
+
+  // Update caches
+  cachedGreetingBuffer = audio;
+
+  // Upload to storage in background (don't await)
+  storage.upload(GREETING_STORAGE_PATH, audio).then(() => {
+    console.log('Uploaded greeting to storage');
+  }).catch(err => {
+    console.warn('Failed to upload greeting to storage:', err);
+  });
+
+  return audio;
 }
 
 export async function POST(): Promise<NextResponse> {
@@ -41,13 +53,7 @@ export async function POST(): Promise<NextResponse> {
 
     createSession(sessionId);
 
-    let audioBuffer = await getCachedGreeting();
-
-    if (!audioBuffer) {
-      audioBuffer = await generateSpeech(GREETING_TEXT, CONCIERGE_VOICE_ID);
-      // Don't await this, let it happen in background or just catch errors inside
-      await cacheGreetingAudio(audioBuffer);
-    }
+    const audioBuffer = await getGreeting();
 
     const audioBase64 = audioBuffer.toString('base64');
 

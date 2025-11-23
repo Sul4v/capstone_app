@@ -27,7 +27,7 @@ export function getPersonaVideoPublicPath(expertName: string): string {
 }
 
 export async function personaVideoExists(expertName: string): Promise<boolean> {
-  return storage.exists(getVideoFileName(expertName));
+  return storage.exists(`personas/videos/${getVideoFileName(expertName)}`);
 }
 
 export function buildPersonaVideoStatus(
@@ -118,7 +118,7 @@ export function queuePersonaVideoGeneration(
 
       // 6. Upload Video
       console.log(`[persona-video] Uploading video for "${expertName}"...`);
-      const publicUrl = await storage.upload(fileName, videoBuffer);
+      const publicUrl = await storage.upload(`personas/videos/${fileName}`, videoBuffer);
       console.log(`[persona-video] Successfully generated and uploaded video for "${expertName}" to ${publicUrl}`);
 
     } catch (error) {

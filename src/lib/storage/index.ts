@@ -3,36 +3,37 @@ import path from 'node:path';
 import { put, list } from '@vercel/blob';
 
 export interface StorageService {
-    upload(filename: string, buffer: Buffer): Promise<string>;
-    exists(filename: string): Promise<boolean>;
-    getUrl(filename: string): string;
+    upload(pathName: string, buffer: Buffer): Promise<string>;
+    exists(pathName: string): Promise<boolean>;
+    download(pathName: string): Promise<Buffer | null>;
+    getUrl(pathName: string): string;
 }
 
 class LocalStorageService implements StorageService {
     private publicDir = path.join(process.cwd(), 'public');
-    private baseDir = path.join(this.publicDir, 'personas', 'videos');
 
     constructor() {
-        // Ensure directory exists
-        fs.mkdir(this.baseDir, { recursive: true }).catch((err) => {
-            console.warn('[Storage] Failed to create local storage directory (might be read-only):', err);
+        // Ensure base directory exists
+        fs.mkdir(this.publicDir, { recursive: true }).catch((err) => {
+            console.warn('[Storage] Failed to create public directory:', err);
         });
     }
 
-    async upload(filename: string, buffer: Buffer): Promise<string> {
-        const filePath = path.join(this.baseDir, filename);
+    async upload(pathName: string, buffer: Buffer): Promise<string> {
+        const filePath = path.join(this.publicDir, pathName);
         try {
+            await fs.mkdir(path.dirname(filePath), { recursive: true });
             await fs.writeFile(filePath, buffer);
         } catch (error) {
             console.error('[Storage] Failed to save file locally:', error);
             throw new Error('Failed to save file. Storage might be read-only.');
         }
-        return this.getUrl(filename);
+        return this.getUrl(pathName);
     }
 
-    async exists(filename: string): Promise<boolean> {
+    async exists(pathName: string): Promise<boolean> {
         try {
-            const filePath = path.join(this.baseDir, filename);
+            const filePath = path.join(this.publicDir, pathName);
             await fs.access(filePath);
             return true;
         } catch {
@@ -40,24 +41,33 @@ class LocalStorageService implements StorageService {
         }
     }
 
-    getUrl(filename: string): string {
-        return `/personas/videos/${filename}`;
+    async download(pathName: string): Promise<Buffer | null> {
+        try {
+            const filePath = path.join(this.publicDir, pathName);
+            return await fs.readFile(filePath);
+        } catch {
+            return null;
+        }
+    }
+
+    getUrl(pathName: string): string {
+        return `/${pathName}`;
     }
 }
 
 class VercelBlobStorageService implements StorageService {
-    async upload(filename: string, buffer: Buffer): Promise<string> {
-        const { url } = await put(`personas/videos/${filename}`, buffer, {
+    async upload(pathName: string, buffer: Buffer): Promise<string> {
+        const { url } = await put(pathName, buffer, {
             access: 'public',
             addRandomSuffix: false, // Keep filename consistent for caching
         });
         return url;
     }
 
-    async exists(filename: string): Promise<boolean> {
+    async exists(pathName: string): Promise<boolean> {
         try {
             const { blobs } = await list({
-                prefix: `personas/videos/${filename}`,
+                prefix: pathName,
                 limit: 1
             });
             return blobs.length > 0;
@@ -67,7 +77,26 @@ class VercelBlobStorageService implements StorageService {
         }
     }
 
-    getUrl(filename: string): string {
+    async download(pathName: string): Promise<Buffer | null> {
+        try {
+            const { blobs } = await list({
+                prefix: pathName,
+                limit: 1
+            });
+            if (blobs.length === 0) return null;
+
+            const response = await fetch(blobs[0].url);
+            if (!response.ok) return null;
+
+            const arrayBuffer = await response.arrayBuffer();
+            return Buffer.from(arrayBuffer);
+        } catch (error) {
+            console.warn('[Storage] Failed to download blob:', error);
+            return null;
+        }
+    }
+
+    getUrl(pathName: string): string {
         // This is still tricky without the base URL.
         // We rely on the client knowing the base URL or the upload returning it.
         // For now, return empty string as it's mostly used for upload return.
