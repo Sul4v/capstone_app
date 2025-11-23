@@ -22,7 +22,7 @@ export interface Persona {
 // Portrait metadata interface
 export interface Portrait {
   url: string;
-  source: 'wikipedia' | 'manual' | 'placeholder';
+  source: 'wikipedia' | 'manual' | 'placeholder' | 'google';
   attribution?: string;
   license?: string;
   thumbnailUrl?: string;

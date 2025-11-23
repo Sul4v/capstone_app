@@ -60,9 +60,9 @@ export async function generateSpeech(text: string, voiceId: string): Promise<Buf
       (typeof errorBody?.detail === 'string' ? errorBody.detail : undefined) ||
       (typeof errorBody?.detail === 'object' &&
         errorBody.detail !== null &&
-        'message' in (errorBody.detail as Record<string, unknown>) &&
+        'message' in (errorBody.detail as unknown as Record<string, unknown>) &&
         typeof (errorBody.detail as { message?: unknown }).message === 'string'
-        ? (errorBody.detail as { message: string }).message
+        ? (errorBody.detail as unknown as { message: string }).message
         : undefined);
     const message =
       detailMessage ||

@@ -7,8 +7,8 @@ type TestRouterRequest = {
 
 export async function POST(request: Request): Promise<NextResponse> {
   try {
-    const body = (await request.json()) as TestRouterRequest;
-    const { question } = body;
+    const body = (await request.json()) as TestRouterRequest & { currentExpertName?: string };
+    const { question, currentExpertName } = body;
 
     if (typeof question !== 'string' || !question.trim()) {
       return NextResponse.json(
@@ -17,7 +17,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
     }
 
-    const expert = await routeToExpert(question);
+    const expert = await routeToExpert(question, { currentExpertName });
     return NextResponse.json({ success: true, expert });
   } catch (error) {
     console.error('Router test endpoint failed:', error);

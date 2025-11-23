@@ -11,6 +11,7 @@ import {
   getSession,
   setSessionExpert,
   addMessageToSession,
+  createSession,
 } from '@/lib/sessions';
 import { Expert, Message } from '@/types';
 
@@ -44,14 +45,14 @@ function resolveVoiceId(expert: Expert): string {
 
 type StreamPayload =
   | {
-      type: 'metadata';
-      transcript: string;
-      expert: {
-        name: string;
-        expertiseAreas?: string[];
-        reasoning?: string;
-      };
-    }
+    type: 'metadata';
+    transcript: string;
+    expert: {
+      name: string;
+      expertiseAreas?: string[];
+      reasoning?: string;
+    };
+  }
   | { type: 'text_delta'; delta: string }
   | { type: 'audio_chunk'; index: number; text: string; audioBase64: string }
   | { type: 'complete'; text: string; processingTimeMs: number }
@@ -64,9 +65,22 @@ function enqueuePayload(
   controller: ReadableStreamDefaultController<Uint8Array>,
   payload: StreamPayload,
 ): void {
-  controller.enqueue(
-    textEncoder.encode(`${JSON.stringify(payload)}\n`),
-  );
+  try {
+    controller.enqueue(textEncoder.encode(`${JSON.stringify(payload)}\n`));
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : String(error ?? 'Unknown');
+
+    if (
+      message.includes('Controller is already closed') ||
+      message.includes('closed')
+    ) {
+      // Stream is already done/closed, ignore additional payloads.
+      return;
+    }
+
+    throw error;
+  }
 }
 
 function extractChunks(buffer: string): {
@@ -122,20 +136,19 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
     }
 
-    const session = getSession(sessionId);
+    let session = getSession(sessionId);
     if (!session) {
-      return NextResponse.json(
-        { success: false, error: 'Invalid session.' },
-        { status: 404 },
+      console.warn(
+        `[Session ${sessionId}] Session not found (likely due to server restart). Recreating...`,
       );
+      session = createSession(sessionId);
     }
 
     console.log(`[Session ${sessionId}] Step 1: Transcribing audio...`);
     const transcribeStart = Date.now();
     const transcript = await transcribeAudio(audioFile);
     console.log(
-      `[Session ${sessionId}] Transcription took ${
-        Date.now() - transcribeStart
+      `[Session ${sessionId}] Transcription took ${Date.now() - transcribeStart
       }ms`,
     );
 
@@ -155,30 +168,31 @@ export async function POST(request: Request): Promise<NextResponse> {
     addMessageToSession(sessionId, userMessage);
 
     let expert = session.expert;
+    const previousExpertName = expert?.name;
+    const routeStart = Date.now();
+    const routedExpert = await routeToExpert(transcript, {
+      conversationHistory: session.conversationHistory,
+      currentExpertName: previousExpertName,
+    });
+    const voiceIdFromRouter = resolveVoiceId(routedExpert);
+    expert = { ...routedExpert, voiceId: voiceIdFromRouter };
+    setSessionExpert(sessionId, expert);
 
-    if (!expert) {
-      console.log(
-        `[Session ${sessionId}] Step 2: Routing to expert (first question)...`,
-      );
-      const routeStart = Date.now();
-      const routedExpert = await routeToExpert(transcript);
-      const voiceId = resolveVoiceId(routedExpert);
-      expert = { ...routedExpert, voiceId };
-      setSessionExpert(sessionId, expert);
-      console.log(
-        `[Session ${sessionId}] Routing took ${Date.now() - routeStart}ms`,
-      );
+    console.log(
+      `[Session ${sessionId}] Routing took ${Date.now() - routeStart}ms`,
+    );
+
+    if (!previousExpertName) {
       console.log(
         `[Session ${sessionId}] Selected expert: ${expert.name} (voice: ${expert.voiceId}) - ${expert.reasoning}`,
       );
-    } else {
-      if (!expert.voiceId) {
-        const assignedVoice = resolveVoiceId(expert);
-        expert = { ...expert, voiceId: assignedVoice };
-        setSessionExpert(sessionId, expert);
-      }
+    } else if (previousExpertName === expert.name) {
       console.log(
-        `[Session ${sessionId}] Using existing expert: ${expert.name} (voice: ${expert.voiceId}) (follow-up question)`,
+        `[Session ${sessionId}] Continuing with expert: ${expert.name} (voice: ${expert.voiceId}) - ${expert.reasoning}`,
+      );
+    } else {
+      console.log(
+        `[Session ${sessionId}] Switched expert from ${previousExpertName} to ${expert.name} (voice: ${expert.voiceId}) - ${expert.reasoning}`,
       );
     }
 
@@ -396,8 +410,7 @@ export async function POST(request: Request): Promise<NextResponse> {
           }
           enqueuePayload(controller, { type: 'done' });
           console.log(
-            `[Session ${sessionId}] Stream finalized after ${
-              Date.now() - chunkStart
+            `[Session ${sessionId}] Stream finalized after ${Date.now() - chunkStart
             }ms (queue start: ${queueStartTime})`,
           );
           controller.close();

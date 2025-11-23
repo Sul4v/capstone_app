@@ -167,7 +167,7 @@ export function playAudio(
 export function isAudioRecordingSupported(): boolean {
   return !!(
     navigator.mediaDevices &&
-    navigator.mediaDevices.getUserMedia &&
+    (navigator.mediaDevices as any).getUserMedia &&
     window.MediaRecorder
   );
 }

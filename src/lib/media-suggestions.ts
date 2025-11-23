@@ -18,28 +18,9 @@ const openai = new OpenAI({
 
 const MEDIA_SUGGESTION_MODEL = process.env.MEDIA_SUGGESTION_MODEL || 'gpt-5-mini';
 
-const SYSTEM_PROMPT = `You are a visual content curator for an educational call assistant. Your job is to suggest relevant image search queries based on the conversation context.
+import { MEDIA_SUGGESTION_SYSTEM_PROMPT } from '@/lib/prompts';
 
-Given a user's question and the expert's response, generate 2-3 concise image search queries that would help visualize and reinforce the concepts being discussed.
-
-For each query:
-1. The search query should be specific and likely to return relevant conceptual images
-2. The caption should be brief (8-12 words max) and explain what the image illustrates
-3. Focus on concepts, processes, or visual representations rather than generic stock photos
-
-IMPORTANT: You MUST return ONLY a valid JSON array of objects with "query" and "caption" fields. Do not include any explanatory text before or after the JSON.
-
-Example format (return exactly this structure):
-[
-  {
-    "query": "query for an image",
-    "caption": "caption for the image"
-  },
-  {
-    "query": "query for an image",
-    "caption": "caption for the image"
-  }
-]`;
+const SYSTEM_PROMPT = MEDIA_SUGGESTION_SYSTEM_PROMPT;
 
 export interface GenerateMediaSuggestionsOptions {
   transcript?: string;
@@ -96,10 +77,10 @@ export async function generateMediaSuggestions(
       ...(isGPT5Model
         ? {}
         : {
-            temperature: 0.7,
-            max_completion_tokens: 500,
-            response_format: { type: 'json_object' },
-          }),
+          temperature: 0.7,
+          max_completion_tokens: 500,
+          response_format: { type: 'json_object' },
+        }),
     });
 
     const responseContent = completion.choices[0]?.message?.content;

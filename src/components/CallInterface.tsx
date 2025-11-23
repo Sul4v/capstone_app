@@ -62,6 +62,7 @@ const MEDIA_CARD_PLACEHOLDERS = [
 ] as const;
 
 const MEDIA_SWIPE_THRESHOLD_PX = 60;
+const ENABLE_MEDIA_PREVIEW = false;
 
 function createMessageId(): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
@@ -1010,8 +1011,8 @@ export default function CallInterface() {
               }));
 
               // Update media context and trigger preview fetch
-              mediaContextRef.current.responsePreview = fullExpertResponse;
-              if (expertMessageId) {
+              if (ENABLE_MEDIA_PREVIEW && expertMessageId) {
+                mediaContextRef.current.responsePreview = fullExpertResponse;
                 triggerMediaFetch('preview', expertMessageId);
               }
             }

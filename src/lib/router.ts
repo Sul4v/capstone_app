@@ -1,39 +1,72 @@
 import OpenAI from 'openai';
-import { Expert } from '@/types';
+import { Expert, Message } from '@/types';
+import { ROUTER_SYSTEM_PROMPT } from '@/lib/prompts';
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
+interface RoutingContext {
+  conversationHistory?: Message[];
+  currentExpertName?: string;
+}
+
+const HISTORY_SNIPPET_LIMIT = 6;
+
+function formatHistoryEntry(message: Message): string {
+  const roleLabel =
+    message.role === 'user'
+      ? 'User'
+      : message.role === 'expert'
+        ? 'Expert'
+        : message.role === 'assistant'
+          ? 'Assistant'
+          : 'System';
+
+  const personaSuffix = message.expertName ? ` (${message.expertName})` : '';
+  const text = message.content.trim().replace(/\s+/g, ' ');
+  return `${roleLabel}${personaSuffix}: ${text}`;
+}
+
+function buildHistoryExcerpt(history: Message[]): string {
+  if (!history.length) {
+    return '';
+  }
+
+  const recent = history.slice(-HISTORY_SNIPPET_LIMIT);
+  return recent.map(formatHistoryEntry).join('\n');
+}
+
 function buildExpertId(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 }
 
-export async function routeToExpert(question: string): Promise<Expert> {
-  const systemPrompt = `You are an expert routing system for software engineering questions. Your job is to identify which REAL-WORLD software engineering expert would be the best person to answer the user's question.
+export async function routeToExpert(
+  question: string,
+  context: RoutingContext = {},
+): Promise<Expert> {
+  const systemPrompt = ROUTER_SYSTEM_PROMPT;
 
-Analyze the question and identify an actual, well-known software engineering expert who has deep expertise in this area. Consider their known specializations, contributions, and philosophies.
+  const historyExcerpt = buildHistoryExcerpt(context.conversationHistory ?? []);
+  const historySection = historyExcerpt
+    ? `Conversation history:\n${historyExcerpt}`
+    : 'No conversation history yet.';
+  const currentExpertLine = context.currentExpertName
+    ? `Current expert: ${context.currentExpertName}`
+    : 'No expert is currently assigned.';
 
-Focus on the question and identify the most relevant expert.
-
-Keep in consideration the timeframe of the question. As in, if the question talks about React, you should choose a expert that is familiar with React 19. not someone who is too old to know about React.
-
-Return ONLY valid JSON (no markdown, no code blocks):
-{
-  "expertName": "Full name of the real expert",
-  "expertiseAreas": ["area1", "area2", "area3"],
-  "reasoning": "Brief explanation of why this expert is perfect for this question",
-  "gender": "male" | "female" | "neutral"
-}
-
-If the question is too vague or general, choose a well-rounded expert.`;
+  const userPrompt = [
+    historySection,
+    currentExpertLine,
+    `Current question: ${question}`,
+  ].join('\n\n');
 
   try {
     const response = await openai.chat.completions.create({
       model: 'gpt-4o-mini',
       messages: [
         { role: 'system', content: systemPrompt },
-        { role: 'user', content: question },
+        { role: 'user', content: userPrompt },
       ],
       temperature: 0.3,
       response_format: { type: 'json_object' },
@@ -55,8 +88,8 @@ If the question is too vague or general, choose a well-rounded expert.`;
 
     const expertiseAreas = Array.isArray(result.expertiseAreas)
       ? (result.expertiseAreas.filter(
-          area => typeof area === 'string' && area.trim(),
-        ) as string[])
+        area => typeof area === 'string' && area.trim(),
+      ) as string[])
       : [];
 
     const reasoning =

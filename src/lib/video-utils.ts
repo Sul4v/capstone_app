@@ -22,7 +22,12 @@ export function normalizeNameToFilename(name: string): string {
  */
 export function getPersonaVideoPath(name: string): string {
   const normalizedName = normalizeNameToFilename(name);
-  return `/personas/videos/${normalizedName}.mp4`;
+  const baseUrl = process.env.NEXT_PUBLIC_STORAGE_BASE_URL || '/personas/videos';
+  // Handle full URLs (Blob) vs local paths
+  if (baseUrl.startsWith('http')) {
+    return `${baseUrl.replace(/\/$/, '')}/${normalizedName}.mp4`;
+  }
+  return `${baseUrl.replace(/\/$/, '')}/${normalizedName}.mp4`;
 }
 
 /**

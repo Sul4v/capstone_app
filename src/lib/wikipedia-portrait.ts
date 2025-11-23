@@ -39,6 +39,15 @@ interface WikipediaImageInfoResponse {
   };
 }
 
+interface GoogleImageResult {
+  link?: string;
+  displayLink?: string;
+  image?: {
+    contextLink?: string;
+    thumbnailLink?: string;
+  };
+}
+
 /**
  * Fetches portrait image from Wikipedia for a given person name
  * @param personName Full name of the person (e.g., "Robert C. Martin")
@@ -172,6 +181,61 @@ export async function fetchWikipediaPortrait(
 }
 
 /**
+ * Fetches portrait image from Google Custom Search (images) for a given person
+ * Uses GOOGLE_API_KEY and GOOGLE_CSE_ID environment variables if available
+ */
+export async function fetchGooglePortrait(
+  personName: string,
+): Promise<Portrait | null> {
+  const apiKey = process.env.GOOGLE_API_KEY;
+  const cseId = process.env.GOOGLE_CSE_ID;
+
+  if (!apiKey || !cseId) {
+    console.warn(
+      '[portrait] GOOGLE_API_KEY or GOOGLE_CSE_ID not set; skipping Google fallback',
+    );
+    return null;
+  }
+
+  try {
+    const url = new URL('https://www.googleapis.com/customsearch/v1');
+    url.searchParams.set('q', personName);
+    url.searchParams.set('cx', cseId);
+    url.searchParams.set('key', apiKey);
+    url.searchParams.set('searchType', 'image');
+    url.searchParams.set('num', '3');
+    url.searchParams.set('safe', 'high');
+    url.searchParams.set('imgType', 'face');
+
+    const response = await fetch(url.toString());
+    if (!response.ok) {
+      console.warn(
+        `[portrait] Google image search failed for "${personName}": ${response.status}`,
+      );
+      return null;
+    }
+
+    const data = (await response.json()) as { items?: GoogleImageResult[] };
+    const item = data.items?.find(result => !!result.link);
+
+    if (!item?.link) {
+      console.warn(`[portrait] Google image search returned no results for "${personName}"`);
+      return null;
+    }
+
+    return {
+      url: item.link,
+      thumbnailUrl: item.image?.thumbnailLink,
+      source: 'google',
+      attribution: item.displayLink || 'Google Images',
+    };
+  } catch (error) {
+    console.error(`[portrait] Error fetching Google portrait for "${personName}":`, error);
+    return null;
+  }
+}
+
+/**
  * Generate a placeholder portrait with initials
  * @param name Person's name
  * @returns Portrait object with data URL for SVG placeholder
@@ -227,6 +291,12 @@ export async function getExpertPortrait(
   const wikiPortrait = await fetchWikipediaPortrait(expertName);
   if (wikiPortrait) {
     return wikiPortrait;
+  }
+
+  // Fallback to Google Custom Search if configured
+  const googlePortrait = await fetchGooglePortrait(expertName);
+  if (googlePortrait) {
+    return googlePortrait;
   }
 
   // Fallback to placeholder
