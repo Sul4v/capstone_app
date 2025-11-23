@@ -47,7 +47,7 @@ export async function createElevenLabsRealtimeStream(
     throw new Error('Voice ID required for ElevenLabs realtime stream.');
   }
 
-  const url = `wss://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream-input?model_id=${modelId}`;
+  const url = `wss://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream-input?model_id=${modelId}&output_format=mp3_44100_128`;
 
   const ws = new WebSocket(url, {
     headers: {

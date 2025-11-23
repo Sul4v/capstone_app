@@ -221,12 +221,15 @@ export async function POST(request: Request): Promise<NextResponse> {
         const pendingChunkTexts: Array<{ index: number; text: string }> = [];
         let nextChunkIndex = 0;
 
-        const CHAR_THRESHOLD = 140;
+        const CHAR_THRESHOLD_START = 50; // Fast start
+        const CHAR_THRESHOLD_STABLE = 150; // Stable playback
         const WORD_THRESHOLD = 24;
         const CHUNK_DELAY_MS = 220;
+
         let streamingError: string | null = null;
         let hasStreamedAudio = false;
         let ttsStream: ElevenLabsRealtimeStream | null = null;
+        let isFirstChunk = true;
 
         ttsStream = await createElevenLabsRealtimeStream(
           {
@@ -296,12 +299,15 @@ export async function POST(request: Request): Promise<NextResponse> {
             });
             ttsStream?.sendText(chunkToSend, { flush: true });
             pendingChunk = '';
+            isFirstChunk = false; // Switch to stable threshold after first flush
           }
           clearFlushTimeout();
         };
 
         const shouldFlush = (chunk: string): boolean => {
-          if (chunk.length >= CHAR_THRESHOLD) {
+          const threshold = isFirstChunk ? CHAR_THRESHOLD_START : CHAR_THRESHOLD_STABLE;
+
+          if (chunk.length >= threshold) {
             return true;
           }
           const wordCount = chunk.split(/\s+/).filter(Boolean).length;
