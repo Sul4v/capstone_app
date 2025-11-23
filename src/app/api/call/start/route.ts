@@ -11,9 +11,10 @@ const CONCIERGE_VOICE_ID =
   process.env.ELEVENLABS_CONCIERGE_VOICE_ID ?? 'EXAVITQu4vr4xnSDxMaL';
 const GREETING_TEXT =
   "Hello! I'm your AI concierge. I'm here to connect you with expert software engineers. What would you like to know about software engineering today?";
+import os from 'os';
+
 const GREETING_CACHE_PATH = path.join(
-  process.cwd(),
-  '.cache',
+  os.tmpdir(),
   'concierge-greeting.mp3',
 );
 
