@@ -14,12 +14,19 @@ class LocalStorageService implements StorageService {
 
     constructor() {
         // Ensure directory exists
-        fs.mkdir(this.baseDir, { recursive: true }).catch(console.error);
+        fs.mkdir(this.baseDir, { recursive: true }).catch((err) => {
+            console.warn('[Storage] Failed to create local storage directory (might be read-only):', err);
+        });
     }
 
     async upload(filename: string, buffer: Buffer): Promise<string> {
         const filePath = path.join(this.baseDir, filename);
-        await fs.writeFile(filePath, buffer);
+        try {
+            await fs.writeFile(filePath, buffer);
+        } catch (error) {
+            console.error('[Storage] Failed to save file locally:', error);
+            throw new Error('Failed to save file. Storage might be read-only.');
+        }
         return this.getUrl(filename);
     }
 

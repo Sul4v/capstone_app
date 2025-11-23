@@ -11,16 +11,12 @@ const CONCIERGE_VOICE_ID =
   process.env.ELEVENLABS_CONCIERGE_VOICE_ID ?? 'EXAVITQu4vr4xnSDxMaL';
 const GREETING_TEXT =
   "Hello! I'm your AI concierge. I'm here to connect you with expert software engineers. What would you like to know about software engineering today?";
-import os from 'os';
-
-const GREETING_CACHE_PATH = path.join(
-  os.tmpdir(),
-  'concierge-greeting.mp3',
-);
+const GREETING_CACHE_PATH = '/tmp/concierge-greeting.mp3';
 
 async function getCachedGreeting(): Promise<Buffer | null> {
   try {
     const cached = await fs.readFile(GREETING_CACHE_PATH);
+    console.log('Using cached greeting');
     return cached;
   } catch {
     return null;
@@ -28,9 +24,15 @@ async function getCachedGreeting(): Promise<Buffer | null> {
 }
 
 async function cacheGreetingAudio(audio: Buffer): Promise<void> {
-  const dir = path.dirname(GREETING_CACHE_PATH);
-  await fs.mkdir(dir, { recursive: true });
-  await fs.writeFile(GREETING_CACHE_PATH, audio);
+  try {
+    const dir = path.dirname(GREETING_CACHE_PATH);
+    // /tmp should always exist, but just in case
+    await fs.mkdir(dir, { recursive: true });
+    await fs.writeFile(GREETING_CACHE_PATH, audio);
+    console.log('Cached greeting audio');
+  } catch (error) {
+    console.warn('Failed to cache greeting audio (non-fatal):', error);
+  }
 }
 
 export async function POST(): Promise<NextResponse> {
@@ -43,6 +45,7 @@ export async function POST(): Promise<NextResponse> {
 
     if (!audioBuffer) {
       audioBuffer = await generateSpeech(GREETING_TEXT, CONCIERGE_VOICE_ID);
+      // Don't await this, let it happen in background or just catch errors inside
       await cacheGreetingAudio(audioBuffer);
     }
 
