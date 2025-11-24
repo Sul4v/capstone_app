@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Persona Call App",
+  title: "Persona Call",
   description: "AI-powered expert calls",
 };
 
