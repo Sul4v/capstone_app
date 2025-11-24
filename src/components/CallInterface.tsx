@@ -1267,7 +1267,7 @@ export default function CallInterface() {
 
           {/* Expert Portrait (Top Right) */}
           <div
-            className="group absolute top-8 right-8 h-24 w-24 overflow-hidden rounded-full border border-white/10 bg-white/5 shadow-2xl backdrop-blur-sm transition-transform hover:scale-105"
+            className="group absolute top-8 right-8 z-50 h-40 w-40 overflow-hidden rounded-full border border-white/10 bg-slate-900 shadow-2xl transition-transform hover:scale-105"
             title={expertPortrait?.attribution || undefined}
           >
             {hasVideo && personaVideoPath ? (
