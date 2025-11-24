@@ -202,14 +202,46 @@ export async function generateGeminiVideo(
   };
 
   try {
-    // Step 1: Start Operation
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(videoRequest),
-    });
+    // Step 1: Start Operation with Retry Logic
+    let response: Response | null = null;
+    let attempt = 0;
+    const maxRetries = 3;
+    let delayMs = 2000;
+
+    while (attempt <= maxRetries) {
+      try {
+        response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(videoRequest),
+        });
+
+        if (response.status !== 429) {
+          break; // Success or other error, exit loop
+        }
+
+        // It's a 429, wait and retry
+        console.warn(`[persona-video] Rate limit exceeded (429). Retrying in ${delayMs}ms... (Attempt ${attempt + 1}/${maxRetries})`);
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+        delayMs *= 2; // Exponential backoff
+        attempt++;
+      } catch (fetchError) {
+        // Network error, maybe retry? For now let's treat as failure or let outer catch handle it if we want
+        console.error('[persona-video] Network error during video generation request:', fetchError);
+        throw fetchError;
+      }
+    }
+
+    if (!response) {
+      throw new Error('Failed to initiate video generation request after retries.');
+    }
 
     if (!response.ok) {
+      if (response.status === 429) {
+        console.error('[persona-video] Rate limit exceeded after max retries.');
+        return { buffer: null, blocked: false };
+      }
+
       if (response.status === 404) {
         console.warn(
           '[persona-video] Video generation model not found (404). Skipping video generation.',

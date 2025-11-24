@@ -29,7 +29,7 @@ export async function describeImage(
                     ],
                 },
             ],
-            max_tokens: 150,
+            max_completion_tokens: 150,
         });
 
         return response.choices[0]?.message?.content || null;

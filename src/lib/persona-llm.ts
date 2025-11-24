@@ -75,7 +75,7 @@ export async function getExpertResponse(
       model: 'gpt-4o',
       messages,
       temperature: 0.7,
-      max_tokens: 220,
+      max_completion_tokens: 220,
     });
 
     return (
