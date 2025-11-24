@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import { normalizeNameToFilename } from '@/lib/video-utils';
 import { VIDEO_GENERATION_PROMPT } from '@/lib/prompts';
+import { MODELS } from '@/lib/models';
 import { storage } from '@/lib/storage';
 import { generateLookalikeImage, describeImage } from '@/lib/image-generation';
 // The following functions are defined in this file, so no self-import is needed here.
@@ -184,7 +185,7 @@ export async function generateGeminiVideo(
   }
 
   const baseUrl = 'https://generativelanguage.googleapis.com/v1beta';
-  const model = 'veo-3.1-generate-preview';
+  const model = MODELS.VIDEO_GENERATION;
   const url = `${baseUrl}/models/${model}:predictLongRunning?key=${apiKey}`;
 
   const videoRequest = {

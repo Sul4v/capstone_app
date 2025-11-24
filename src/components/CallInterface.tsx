@@ -36,21 +36,21 @@ type StartCallResponse = {
 
 type StreamResponseMessage =
   | {
-      type: 'metadata';
-      transcript: string;
-      expert?: {
-        name: string;
-        expertiseAreas?: string[];
-        reasoning?: string;
-      };
-    }
+    type: 'metadata';
+    transcript: string;
+    expert?: {
+      name: string;
+      expertiseAreas?: string[];
+      reasoning?: string;
+    };
+  }
   | { type: 'text_delta'; delta: string }
   | {
-      type: 'audio_chunk';
-      index: number;
-      text: string;
-      audioBase64: string;
-    }
+    type: 'audio_chunk';
+    index: number;
+    text: string;
+    audioBase64: string;
+  }
   | { type: 'complete'; text: string; processingTimeMs?: number }
   | { type: 'error'; message: string }
   | { type: 'done' };
@@ -263,8 +263,8 @@ export default function CallInterface() {
         err instanceof Error
           ? err.message
           : typeof err === 'string'
-          ? err
-          : '';
+            ? err
+            : '';
 
       console.error(`Error in ${context}:`, err);
 
@@ -483,7 +483,7 @@ export default function CallInterface() {
             } | null;
             throw new Error(
               errorJson?.error ??
-                `Media suggestion request failed (${response.status}).`,
+              `Media suggestion request failed (${response.status}).`,
             );
           }
 
@@ -1197,26 +1197,26 @@ export default function CallInterface() {
     callStatus === 'idle'
       ? 'bg-slate-400'
       : callStatus === 'listening'
-      ? 'bg-rose-400'
-      : callStatus === 'processing'
-      ? 'bg-amber-400'
-      : 'bg-emerald-400';
+        ? 'bg-rose-400'
+        : callStatus === 'processing'
+          ? 'bg-amber-400'
+          : 'bg-emerald-400';
 
   const statusHelperText =
     callStatus === 'idle'
       ? 'Hold the button to ask your question.'
       : callStatus === 'listening'
-      ? 'Listening in real time...'
-      : callStatus === 'processing'
-      ? 'Transcribing and analyzing your audio...'
-      : "Responding with your concierge's answer. (Hold button to interrupt)";
+        ? 'Listening in real time...'
+        : callStatus === 'processing'
+          ? 'Transcribing and analyzing your audio...'
+          : "Responding with your concierge's answer. (Hold button to interrupt)";
 
   const isCallButtonDisabled = !isActive && isStartLoading;
   const callButtonLabel = isActive
     ? 'End Call'
     : isStartLoading
-    ? 'Starting...'
-    : 'Start Call';
+      ? 'Starting...'
+      : 'Start Call';
 
   const totalMediaItems = mediaItems.length > 0 ? mediaItems.length : MEDIA_CARD_PLACEHOLDERS.length;
   const canGoToPrevious = activeMediaIndex > 0;
@@ -1258,7 +1258,7 @@ export default function CallInterface() {
               <VideoPortrait
                 videoSrc={personaVideoPath}
                 alt={currentExpert?.name || 'Concierge'}
-                size={128}
+                className="h-full w-full"
                 onError={() => {
                   // If video fails to load, fall back to image
                   setHasVideo(false);
@@ -1345,127 +1345,127 @@ export default function CallInterface() {
                 role="presentation"
               >
                 {(mediaItems.length > 0 ? mediaItems : MEDIA_CARD_PLACEHOLDERS).map((item, index) => {
-                const isActive = index === activeMediaIndex;
+                  const isActive = index === activeMediaIndex;
 
-                let positionClasses = 'pointer-events-none';
-                let positionStyles: React.CSSProperties = {};
+                  let positionClasses = 'pointer-events-none';
+                  let positionStyles: React.CSSProperties = {};
 
-                if (isActive) {
-                  // Center active card
-                  positionClasses = 'pointer-events-auto shadow-2xl shadow-black/40';
-                  positionStyles = {
-                    transform: 'translateX(0) scale(1)',
-                    opacity: 1,
-                    zIndex: 30,
-                  };
-                } else if (index < activeMediaIndex) {
-                  // Cards that have already been shown - stack on LEFT side
-                  // Only show the last 2 cards that were viewed
-                  const offset = activeMediaIndex - index;
-
-                  if (offset > 2) {
-                    // Hide cards beyond the last 2 viewed
-                    positionClasses = 'pointer-events-none';
+                  if (isActive) {
+                    // Center active card
+                    positionClasses = 'pointer-events-auto shadow-2xl shadow-black/40';
                     positionStyles = {
-                      transform: 'translateX(-80%) scale(0.75)',
-                      opacity: 0,
-                      zIndex: 0,
+                      transform: 'translateX(0) scale(1)',
+                      opacity: 1,
+                      zIndex: 30,
                     };
+                  } else if (index < activeMediaIndex) {
+                    // Cards that have already been shown - stack on LEFT side
+                    // Only show the last 2 cards that were viewed
+                    const offset = activeMediaIndex - index;
+
+                    if (offset > 2) {
+                      // Hide cards beyond the last 2 viewed
+                      positionClasses = 'pointer-events-none';
+                      positionStyles = {
+                        transform: 'translateX(-80%) scale(0.75)',
+                        opacity: 0,
+                        zIndex: 0,
+                      };
+                    } else {
+                      // Show last 2 viewed cards, stacked on left
+                      const translateX = -40 - (offset - 1) * 12; // Stack with offset to left
+                      const scale = 0.88 - (offset - 1) * 0.06;
+                      const opacity = 0.7 - (offset - 1) * 0.2;
+
+                      positionClasses = 'pointer-events-none shadow-lg shadow-black/20';
+                      positionStyles = {
+                        transform: `translateX(${translateX}%) scale(${scale})`,
+                        opacity: opacity,
+                        zIndex: 20 - offset,
+                      };
+                    }
                   } else {
-                    // Show last 2 viewed cards, stacked on left
-                    const translateX = -40 - (offset - 1) * 12; // Stack with offset to left
-                    const scale = 0.88 - (offset - 1) * 0.06;
-                    const opacity = 0.7 - (offset - 1) * 0.2;
+                    // Cards waiting to be shown - stack on RIGHT side
+                    // Only show the first 2 cards in the queue
+                    const offset = index - activeMediaIndex;
 
-                    positionClasses = 'pointer-events-none shadow-lg shadow-black/20';
-                    positionStyles = {
-                      transform: `translateX(${translateX}%) scale(${scale})`,
-                      opacity: opacity,
-                      zIndex: 20 - offset,
-                    };
+                    if (offset > 2) {
+                      // Hide cards beyond the first 2 in queue
+                      positionClasses = 'pointer-events-none';
+                      positionStyles = {
+                        transform: 'translateX(80%) scale(0.75)',
+                        opacity: 0,
+                        zIndex: 0,
+                      };
+                    } else {
+                      // Show first 2 cards in queue, stacked on right
+                      const translateX = 40 + (offset - 1) * 12; // Stack with offset to right
+                      const scale = 0.88 - (offset - 1) * 0.06;
+                      const opacity = 0.7 - (offset - 1) * 0.2;
+
+                      positionClasses = 'pointer-events-none shadow-lg shadow-black/20';
+                      positionStyles = {
+                        transform: `translateX(${translateX}%) scale(${scale})`,
+                        opacity: opacity,
+                        zIndex: 20 - offset,
+                      };
+                    }
                   }
-                } else {
-                  // Cards waiting to be shown - stack on RIGHT side
-                  // Only show the first 2 cards in the queue
-                  const offset = index - activeMediaIndex;
 
-                  if (offset > 2) {
-                    // Hide cards beyond the first 2 in queue
-                    positionClasses = 'pointer-events-none';
-                    positionStyles = {
-                      transform: 'translateX(80%) scale(0.75)',
-                      opacity: 0,
-                      zIndex: 0,
-                    };
-                  } else {
-                    // Show first 2 cards in queue, stacked on right
-                    const translateX = 40 + (offset - 1) * 12; // Stack with offset to right
-                    const scale = 0.88 - (offset - 1) * 0.06;
-                    const opacity = 0.7 - (offset - 1) * 0.2;
+                  const backgroundGradient = isActive
+                    ? 'from-white/40 via-white/20 to-white/10'
+                    : 'from-white/20 via-white/10 to-white/5';
 
-                    positionClasses = 'pointer-events-none shadow-lg shadow-black/20';
-                    positionStyles = {
-                      transform: `translateX(${translateX}%) scale(${scale})`,
-                      opacity: opacity,
-                      zIndex: 20 - offset,
-                    };
-                  }
-                }
+                  const isMediaItem = 'imageUrl' in item;
 
-                const backgroundGradient = isActive
-                  ? 'from-white/40 via-white/20 to-white/10'
-                  : 'from-white/20 via-white/10 to-white/5';
-
-                const isMediaItem = 'imageUrl' in item;
-
-                return (
-                  <div
-                    key={isMediaItem ? item.id : (item as typeof MEDIA_CARD_PLACEHOLDERS[number]).id}
-                    className={`absolute flex h-[36rem] w-full max-w-[28rem] overflow-hidden rounded-[2.5rem] border border-white/25 transition-all duration-500 ease-out ${positionClasses}`}
-                    style={positionStyles}
-                    aria-hidden={!isActive}
-                  >
-                    {isMediaItem ? (
-                      <div className="relative h-full w-full bg-slate-900">
-                        <Image
-                          src={item.imageUrl}
-                          alt={item.caption}
-                          fill
-                          className="object-contain"
-                          sizes="(max-width: 768px) 100vw, 28rem"
-                          priority={isActive}
-                          unoptimized
-                        />
-                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/60 to-transparent px-6 pb-6 pt-20">
-                          <p className="text-sm font-medium leading-relaxed text-white drop-shadow-lg">
-                            {item.caption}
-                          </p>
-                          {item.attribution && (
-                            <p className="mt-2 text-xs text-white/70 drop-shadow">
-                              {item.attribution}
+                  return (
+                    <div
+                      key={isMediaItem ? item.id : (item as typeof MEDIA_CARD_PLACEHOLDERS[number]).id}
+                      className={`absolute flex h-[36rem] w-full max-w-[28rem] overflow-hidden rounded-[2.5rem] border border-white/25 transition-all duration-500 ease-out ${positionClasses}`}
+                      style={positionStyles}
+                      aria-hidden={!isActive}
+                    >
+                      {isMediaItem ? (
+                        <div className="relative h-full w-full bg-slate-900">
+                          <Image
+                            src={item.imageUrl}
+                            alt={item.caption}
+                            fill
+                            className="object-contain"
+                            sizes="(max-width: 768px) 100vw, 28rem"
+                            priority={isActive}
+                            unoptimized
+                          />
+                          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/60 to-transparent px-6 pb-6 pt-20">
+                            <p className="text-sm font-medium leading-relaxed text-white drop-shadow-lg">
+                              {item.caption}
                             </p>
+                            {item.attribution && (
+                              <p className="mt-2 text-xs text-white/70 drop-shadow">
+                                {item.attribution}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className={`flex h-full w-full items-center justify-center bg-gradient-to-br ${backgroundGradient} backdrop-blur-xl`}>
+                          {isMediaLoading ? (
+                            <div className="flex flex-col items-center gap-4">
+                              <div className="h-12 w-12 animate-spin rounded-full border-4 border-white/20 border-t-white/80" />
+                              <span className="text-sm font-semibold uppercase tracking-[0.3em] text-white/70">
+                                Loading...
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="text-sm font-semibold uppercase tracking-[0.3em] text-white/70">
+                              {(item as typeof MEDIA_CARD_PLACEHOLDERS[number]).label}
+                            </span>
                           )}
                         </div>
-                      </div>
-                    ) : (
-                      <div className={`flex h-full w-full items-center justify-center bg-gradient-to-br ${backgroundGradient} backdrop-blur-xl`}>
-                        {isMediaLoading ? (
-                          <div className="flex flex-col items-center gap-4">
-                            <div className="h-12 w-12 animate-spin rounded-full border-4 border-white/20 border-t-white/80" />
-                            <span className="text-sm font-semibold uppercase tracking-[0.3em] text-white/70">
-                              Loading...
-                            </span>
-                          </div>
-                        ) : (
-                          <span className="text-sm font-semibold uppercase tracking-[0.3em] text-white/70">
-                            {(item as typeof MEDIA_CARD_PLACEHOLDERS[number]).label}
-                          </span>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+                      )}
+                    </div>
+                  );
+                })}
               </div>
 
               {/* Right navigation button */}
@@ -1498,11 +1498,10 @@ export default function CallInterface() {
                     <button
                       key={index}
                       onClick={() => setActiveMediaIndex(index)}
-                      className={`h-2 rounded-full transition-all duration-300 ${
-                        index === activeMediaIndex
+                      className={`h-2 rounded-full transition-all duration-300 ${index === activeMediaIndex
                           ? 'w-8 bg-white'
                           : 'w-2 bg-white/40 hover:bg-white/60'
-                      }`}
+                        }`}
                       aria-label={`Go to image ${index + 1}`}
                     />
                   ))}
@@ -1532,9 +1531,8 @@ export default function CallInterface() {
                   return (
                     <div
                       key={i}
-                      className={`flex-1 rounded-full bg-gradient-to-t from-white/20 via-white/60 to-white transition-all duration-300 ${
-                        callStatus === 'listening' ? 'animate-wave' : ''
-                      }`}
+                      className={`flex-1 rounded-full bg-gradient-to-t from-white/20 via-white/60 to-white transition-all duration-300 ${callStatus === 'listening' ? 'animate-wave' : ''
+                        }`}
                       style={{
                         height:
                           callStatus === 'listening'
@@ -1676,11 +1674,10 @@ export default function CallInterface() {
           <button
             onClick={isActive ? handleStopCall : handleStartCall}
             disabled={isCallButtonDisabled}
-            className={`flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold transition-all duration-200 ${
-              isActive
+            className={`flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold transition-all duration-200 ${isActive
                 ? 'bg-rose-500 text-white hover:bg-rose-600'
                 : 'bg-emerald-500 text-white hover:bg-emerald-600'
-            } ${isCallButtonDisabled ? 'cursor-not-allowed opacity-70 hover:bg-emerald-500' : ''}`}
+              } ${isCallButtonDisabled ? 'cursor-not-allowed opacity-70 hover:bg-emerald-500' : ''}`}
           >
             {isActive ? (
               <svg
@@ -1731,13 +1728,12 @@ export default function CallInterface() {
               handleHoldCancel();
             }}
             disabled={isHoldDisabled}
-            className={`flex min-w-[160px] items-center justify-center gap-2 rounded-full px-6 py-3 text-sm font-semibold transition-all duration-200 ${
-              isHolding
+            className={`flex min-w-[160px] items-center justify-center gap-2 rounded-full px-6 py-3 text-sm font-semibold transition-all duration-200 ${isHolding
                 ? 'bg-blue-600 text-white shadow-lg'
                 : isHoldDisabled
-                ? 'bg-slate-200 text-slate-500'
-                : 'bg-blue-500 text-white hover:bg-blue-600 shadow-lg/50'
-            }`}
+                  ? 'bg-slate-200 text-slate-500'
+                  : 'bg-blue-500 text-white hover:bg-blue-600 shadow-lg/50'
+              }`}
           >
             {isHolding ? 'Release to send' : 'Hold to talk'}
           </button>

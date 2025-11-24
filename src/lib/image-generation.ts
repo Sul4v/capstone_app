@@ -1,4 +1,5 @@
 import OpenAI from 'openai';
+import { MODELS } from '@/lib/models';
 
 const openai = new OpenAI({
     apiKey: process.env.OPENAI_API_KEY,
@@ -10,7 +11,7 @@ export async function describeImage(
 ): Promise<string | null> {
     try {
         const response = await openai.chat.completions.create({
-            model: 'gpt-4o',
+            model: MODELS.IMAGE_ANALYSIS,
             messages: [
                 {
                     role: 'user',

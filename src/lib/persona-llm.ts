@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import type { ChatCompletionChunk } from 'openai/resources/chat/completions';
 import { Message } from '@/types';
 import { PERSONA_SYSTEM_PROMPT } from '@/lib/prompts';
+import { MODELS } from '@/lib/models';
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -101,7 +102,7 @@ export function streamExpertResponse(
   );
 
   return openai.chat.completions.create({
-    model: 'gpt-4o',
+    model: MODELS.PERSONA_CHAT,
     messages,
     temperature: 0.7,
     max_tokens: 220,

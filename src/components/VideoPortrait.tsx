@@ -14,7 +14,7 @@ export default function VideoPortrait({
   videoSrc,
   alt = 'Video portrait',
   className = '',
-  size = 128,
+  size,
   onError,
 }: VideoPortraitProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -55,8 +55,8 @@ export default function VideoPortrait({
 
   return (
     <div
-      className={`relative overflow-hidden rounded-full ${className}`}
-      style={{ width: size, height: size }}
+      className={`relative overflow-hidden rounded-full ${className} ${!size ? 'w-full h-full' : ''}`}
+      style={size ? { width: size, height: size } : undefined}
     >
       {/* Loading shimmer effect */}
       {!isLoaded && (
@@ -74,9 +74,8 @@ export default function VideoPortrait({
         muted
         playsInline
         autoPlay
-        className={`w-full h-full object-cover transition-opacity duration-300 ${
-          isLoaded ? 'opacity-100' : 'opacity-0'
-        }`}
+        className={`w-full h-full object-cover transition-opacity duration-300 ${isLoaded ? 'opacity-100' : 'opacity-0'
+          }`}
         style={{
           objectPosition: 'center',
         }}

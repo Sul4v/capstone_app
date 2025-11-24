@@ -1,6 +1,7 @@
 import OpenAI from 'openai';
 import { Expert, Message } from '@/types';
 import { ROUTER_SYSTEM_PROMPT } from '@/lib/prompts';
+import { MODELS } from '@/lib/models';
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,

@@ -1,5 +1,7 @@
+import { MODELS } from '@/lib/models';
+
 const DEEPGRAM_API_URL = 'https://api.deepgram.com/v1/listen';
-const DEEPGRAM_MODEL = 'nova-2';
+const DEEPGRAM_MODEL = MODELS.TRANSCRIPTION;
 
 /**
  * Transcribe an audio blob using Deepgram's REST API.

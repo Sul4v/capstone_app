@@ -16,7 +16,9 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-const MEDIA_SUGGESTION_MODEL = process.env.MEDIA_SUGGESTION_MODEL || 'gpt-5-mini';
+import { MODELS } from '@/lib/models';
+
+const MEDIA_SUGGESTION_MODEL = process.env.MEDIA_SUGGESTION_MODEL || MODELS.MEDIA_SUGGESTION;
 
 import { MEDIA_SUGGESTION_SYSTEM_PROMPT } from '@/lib/prompts';
 
