@@ -34,18 +34,19 @@ class StreamingAudioPlayer {
 
     const audioBuffer = StreamingAudioPlayer.base64ToArrayBuffer(base64Audio);
 
-    return new Promise<AudioBuffer>((resolve, reject) => {
-      context.decodeAudioData(
-        audioBuffer.slice(0),
-        decoded => resolve(decoded),
-        error =>
-          reject(
-            error instanceof Error
-              ? error
-              : new Error(String(error)),
-          ),
-      );
-    });
+    // Assume PCM 16-bit, 44.1kHz, mono (from ElevenLabs pcm_44100)
+    const int16Data = new Int16Array(audioBuffer);
+    const float32Data = new Float32Array(int16Data.length);
+
+    for (let i = 0; i < int16Data.length; i++) {
+      // Normalize 16-bit integer to -1.0 to 1.0 float
+      float32Data[i] = int16Data[i] / 32768.0;
+    }
+
+    const buffer = context.createBuffer(1, float32Data.length, 44100);
+    buffer.getChannelData(0).set(float32Data);
+
+    return buffer;
   }
 
   async enqueue(
