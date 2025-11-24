@@ -34,7 +34,7 @@ class StreamingAudioPlayer {
 
     const audioBuffer = StreamingAudioPlayer.base64ToArrayBuffer(base64Audio);
 
-    // Assume PCM 16-bit, 44.1kHz, mono (from ElevenLabs pcm_44100)
+    // Assume PCM 16-bit, 16kHz, mono (from ElevenLabs pcm_16000)
     const int16Data = new Int16Array(audioBuffer);
     const float32Data = new Float32Array(int16Data.length);
 
@@ -43,7 +43,7 @@ class StreamingAudioPlayer {
       float32Data[i] = int16Data[i] / 32768.0;
     }
 
-    const buffer = context.createBuffer(1, float32Data.length, 44100);
+    const buffer = context.createBuffer(1, float32Data.length, 16000);
     buffer.getChannelData(0).set(float32Data);
 
     return buffer;
