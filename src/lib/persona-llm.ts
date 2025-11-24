@@ -72,7 +72,7 @@ export async function getExpertResponse(
     );
 
     const response = await openai.chat.completions.create({
-      model: 'gpt-4o',
+      model: MODELS.PERSONA_CHAT,
       messages,
       temperature: 0.7,
       max_completion_tokens: 220,
@@ -105,7 +105,7 @@ export function streamExpertResponse(
     model: MODELS.PERSONA_CHAT,
     messages,
     temperature: 0.7,
-    max_tokens: 220,
+    max_completion_tokens: 220,
     stream: true,
   });
 }
