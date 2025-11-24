@@ -74,4 +74,5 @@ export interface CallState {
   isMediaLoading: boolean;
   mediaError: string | null;
   selectedMessageId: string | null; // ID of message whose media is displayed
+  userName: string | null;
 }

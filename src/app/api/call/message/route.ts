@@ -13,6 +13,7 @@ import {
   addMessageToSession,
   createSession,
 } from '@/lib/sessions';
+import { saveInteraction } from '@/lib/db';
 import { Expert, Message } from '@/types';
 
 export const runtime = 'nodejs';
@@ -121,6 +122,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     const formData = await request.formData();
     const sessionId = formData.get('sessionId');
     const audioFile = formData.get('audio');
+    const userName = formData.get('userName') as string | null;
 
     if (typeof sessionId !== 'string' || !sessionId.trim()) {
       return NextResponse.json(
@@ -400,6 +402,11 @@ export async function POST(request: Request): Promise<NextResponse> {
           console.log(
             `[Session ${sessionId}] Streaming completed in ${processingTime}ms (LLM: ${llmDuration}ms, total chunks: ${chunkIndex})`,
           );
+
+          // Save interaction to database (fire and forget)
+          saveInteraction(sessionId, transcript, fullResponse.trim(), expert.name, userName || undefined).catch(err => {
+            console.error(`[Session ${sessionId}] Failed to save interaction in background:`, err);
+          });
         } catch (error) {
           console.error('Error streaming call message:', error);
           const message =

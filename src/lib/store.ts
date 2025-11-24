@@ -2,6 +2,8 @@ import { create } from 'zustand';
 import { CallState, Message, Expert, MediaItem } from '@/types';
 
 interface CallStore extends CallState {
+  userName: string | null;
+  setUserName: (name: string) => void;
   setSessionId: (id: string | null) => void;
   setIsActive: (active: boolean) => void;
   setCurrentExpert: (expert: Expert | null) => void;
@@ -22,6 +24,7 @@ interface CallStore extends CallState {
 }
 
 const getInitialState = (): CallState => ({
+  userName: null,
   sessionId: null,
   isActive: false,
   currentExpert: null,
@@ -39,6 +42,7 @@ const getInitialState = (): CallState => ({
 export const useCallStore = create<CallStore>((set) => ({
   ...getInitialState(),
 
+  setUserName: (name) => set({ userName: name }),
   setSessionId: (id) => set({ sessionId: id }),
   setIsActive: (active) => set({ isActive: active }),
   setCurrentExpert: (expert) => set({ currentExpert: expert }),

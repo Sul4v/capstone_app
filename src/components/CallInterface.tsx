@@ -17,6 +17,7 @@ import {
 } from '@/lib/audio-utils';
 import { Message, MediaItem, Portrait } from '@/types';
 import { useCallStore } from '@/lib/store';
+import UserNameModal from '@/components/UserNameModal';
 import ExpertBadge from '@/components/ExpertBadge';
 import MessageBubble from '@/components/MessageBubble';
 import { StreamingAudioPlayer } from '@/lib/streaming-audio-player';
@@ -443,7 +444,8 @@ export default function CallInterface() {
         }
       } else if (reason === 'final') {
         const delta = trimmedResponse.length - lastMediaRequestLengthRef.current;
-        if (delta < 80 && mediaRequestInFlightRef.current !== 'preview') {
+        // Lower threshold for final fetch to ensure we get images even for short responses
+        if (delta < 20 && mediaRequestInFlightRef.current !== 'preview') {
           return;
         }
       }
@@ -1223,11 +1225,16 @@ export default function CallInterface() {
   const canGoToNext = activeMediaIndex < totalMediaItems - 1;
 
   return (
-    <div className="relative min-h-screen bg-slate-950 text-gray-100 lg:flex lg:h-screen lg:flex-col lg:overflow-hidden">
+    <div className="relative min-h-screen bg-slate-950 text-gray-100 lg:flex lg:h-screen lg:flex-col lg:overflow-hidden font-sans selection:bg-indigo-500/30">
       {error ? (
-        <div className="fixed top-4 left-1/2 z-50 -translate-x-1/2 rounded-xl border border-red-500/30 bg-red-500/10 px-6 py-3 text-red-200 shadow-2xl backdrop-blur">
-          <div className="flex items-center gap-3">
-            <span className="text-sm font-medium">{error}</span>
+        <div className="fixed top-6 left-1/2 z-50 -translate-x-1/2 rounded-2xl border border-red-500/20 bg-red-500/10 px-6 py-4 text-red-200 shadow-2xl backdrop-blur-xl transition-all animate-in fade-in slide-in-from-top-4">
+          <div className="flex items-center gap-4">
+            <div className="flex h-6 w-6 items-center justify-center rounded-full bg-red-500/20">
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+            </div>
+            <span className="text-sm font-medium tracking-wide">{error}</span>
             <button
               onClick={() => {
                 if (errorTimeoutRef.current) {
@@ -1235,38 +1242,45 @@ export default function CallInterface() {
                 }
                 setError(null);
               }}
-              className="text-lg leading-none text-red-200 transition-colors hover:text-red-100"
+              className="ml-2 rounded-full p-1 text-red-200/70 transition-colors hover:bg-red-500/20 hover:text-red-100"
               aria-label="Dismiss error"
             >
-              ×
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
             </button>
           </div>
         </div>
       ) : null}
 
       <div className="flex min-h-screen flex-col lg:h-full lg:min-h-0 lg:flex-row">
-        <section className="relative hidden min-h-screen flex-col justify-between overflow-hidden lg:flex lg:w-[70%] xl:w-[70%]">
-          <div className="absolute inset-0 bg-gradient-to-br from-indigo-600 via-blue-600 to-sky-500" />
-          <div className="absolute -top-24 -left-32 h-[28rem] w-[28rem] rounded-full bg-white/20 blur-3xl" />
-          <div className="absolute bottom-[-12rem] right-[-6rem] h-[34rem] w-[34rem] rounded-full bg-indigo-900/50 blur-3xl" />
+        {/* Main Content Area */}
+        <section className="relative hidden min-h-screen flex-col justify-between overflow-hidden lg:flex lg:w-[70%] xl:w-[75%] bg-slate-950">
+          {/* Dynamic Background */}
+          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-indigo-900/40 via-slate-950 to-slate-950" />
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_bottom_left,_var(--tw-gradient-stops))] from-violet-900/20 via-slate-950 to-slate-950" />
+
+          {/* Animated Blobs */}
+          <div className="absolute -top-[20%] -left-[10%] h-[50vw] w-[50vw] rounded-full bg-indigo-600/10 blur-[120px] animate-pulse duration-[8000ms]" />
+          <div className="absolute top-[20%] right-[-10%] h-[40vw] w-[40vw] rounded-full bg-violet-600/10 blur-[100px] animate-pulse duration-[10000ms] delay-1000" />
+          <div className="absolute bottom-[-10%] left-[20%] h-[30vw] w-[30vw] rounded-full bg-blue-600/10 blur-[80px] animate-pulse duration-[12000ms] delay-2000" />
+
+          {/* Expert Portrait (Top Right) */}
           <div
-            className="group absolute top-10 right-10 h-32 w-32 overflow-hidden rounded-full border border-white/30 shadow-2xl backdrop-blur"
+            className="group absolute top-8 right-8 h-24 w-24 overflow-hidden rounded-full border border-white/10 bg-white/5 shadow-2xl backdrop-blur-sm transition-transform hover:scale-105"
             title={expertPortrait?.attribution || undefined}
           >
             {hasVideo && personaVideoPath ? (
-              // Use video if available
               <VideoPortrait
                 videoSrc={personaVideoPath}
                 alt={currentExpert?.name || 'Concierge'}
                 className="h-full w-full"
                 onError={() => {
-                  // If video fails to load, fall back to image
                   setHasVideo(false);
                   setPersonaVideoPath(null);
                 }}
               />
             ) : expertPortrait?.url && !isPortraitLoading ? (
-              // Fall back to animated portrait image
               <>
                 <AnimatedPortrait
                   imageUrl={expertPortrait.url}
@@ -1275,70 +1289,45 @@ export default function CallInterface() {
                   intensity={0.6}
                 />
                 {expertPortrait.attribution && (
-                  <div className="absolute inset-x-0 bottom-0 translate-y-full bg-black/90 px-3 py-2 text-xs text-white opacity-0 transition-opacity group-hover:opacity-100">
+                  <div className="absolute inset-x-0 bottom-0 translate-y-full bg-black/80 px-2 py-1 text-[10px] text-white/90 backdrop-blur-md transition-transform group-hover:translate-y-0 text-center">
                     {expertPortrait.attribution}
                   </div>
                 )}
               </>
             ) : (
-              // Final fallback to placeholder
-              <div className="flex h-full w-full items-center justify-center bg-white/15 text-white/80">
+              <div className="flex h-full w-full items-center justify-center bg-white/5 text-white/40">
                 {isPortraitLoading ? (
-                  <div className="h-8 w-8 animate-spin rounded-full border-4 border-white/20 border-t-white/80" />
+                  <div className="h-6 w-6 animate-spin rounded-full border-2 border-white/20 border-t-white/80" />
                 ) : (
-                  <>
-                    <span className="sr-only">Persona avatar placeholder</span>
-                    <svg
-                      className="h-14 w-14"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth={1.6}
-                      viewBox="0 0 24 24"
-                      aria-hidden="true"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        d="M12 12c2.485 0 4.5-2.015 4.5-4.5S14.485 3 12 3 7.5 5.015 7.5 7.5 9.515 12 12 12z"
-                      />
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        d="M5 19.25c0-2.623 3.134-4.75 7-4.75s7 2.127 7 4.75"
-                      />
-                    </svg>
-                  </>
+                  <svg className="h-10 w-10" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
+                  </svg>
                 )}
               </div>
             )}
           </div>
-          <div className="relative z-10 flex h-full flex-col p-16 text-white">
-            <div className="relative flex flex-1 items-center justify-center">
-              {/* Left navigation button */}
+
+          {/* Main Content Container */}
+          <div className="relative z-10 flex h-full flex-col p-12 text-white">
+
+            {/* Carousel Section */}
+            <div className="relative flex flex-1 items-center justify-center perspective-1000">
+              {/* Navigation Buttons */}
               {canGoToPrevious && (
                 <button
                   onClick={goToPreviousMediaCard}
-                  className="absolute left-0 top-1/2 z-40 -translate-y-1/2 rounded-full bg-white/20 p-3 backdrop-blur-md transition-all hover:bg-white/30 hover:scale-110 active:scale-95"
+                  className="absolute left-4 top-1/2 z-40 -translate-y-1/2 rounded-full border border-white/10 bg-white/5 p-4 text-white/70 backdrop-blur-md transition-all hover:bg-white/10 hover:text-white hover:scale-110 active:scale-95 group"
                   aria-label="Previous image"
                 >
-                  <svg
-                    className="h-6 w-6 text-white"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M15 19l-7-7 7-7"
-                    />
+                  <svg className="h-6 w-6 transition-transform group-hover:-translate-x-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
                   </svg>
                 </button>
               )}
 
+              {/* Cards Container */}
               <div
-                className="relative flex flex-1 items-center justify-center select-none cursor-grab active:cursor-grabbing touch-pan-y"
+                className="relative flex h-[60vh] w-full max-w-7xl items-center justify-center select-none cursor-grab active:cursor-grabbing touch-pan-y"
                 onPointerDown={handleMediaPointerDown}
                 onPointerUp={handleMediaPointerUp}
                 onPointerCancel={handleMediaPointerCancel}
@@ -1346,161 +1335,125 @@ export default function CallInterface() {
               >
                 {(mediaItems.length > 0 ? mediaItems : MEDIA_CARD_PLACEHOLDERS).map((item, index) => {
                   const isActive = index === activeMediaIndex;
+                  const isMediaItem = 'imageUrl' in item;
 
-                  let positionClasses = 'pointer-events-none';
-                  let positionStyles: React.CSSProperties = {};
+                  // Calculate offset from active index
+                  const offset = index - activeMediaIndex;
+                  const absOffset = Math.abs(offset);
+
+                  // Visibility logic
+                  if (absOffset > 2) return null;
+
+                  let transform = '';
+                  let zIndex = 0;
+                  let opacity = 0;
+                  let pointerEvents = 'pointer-events-none';
 
                   if (isActive) {
-                    // Center active card
-                    positionClasses = 'pointer-events-auto shadow-2xl shadow-black/40';
-                    positionStyles = {
-                      transform: 'translateX(0) scale(1)',
-                      opacity: 1,
-                      zIndex: 30,
-                    };
-                  } else if (index < activeMediaIndex) {
-                    // Cards that have already been shown - stack on LEFT side
-                    // Only show the last 2 cards that were viewed
-                    const offset = activeMediaIndex - index;
-
-                    if (offset > 2) {
-                      // Hide cards beyond the last 2 viewed
-                      positionClasses = 'pointer-events-none';
-                      positionStyles = {
-                        transform: 'translateX(-80%) scale(0.75)',
-                        opacity: 0,
-                        zIndex: 0,
-                      };
-                    } else {
-                      // Show last 2 viewed cards, stacked on left
-                      const translateX = -40 - (offset - 1) * 12; // Stack with offset to left
-                      const scale = 0.88 - (offset - 1) * 0.06;
-                      const opacity = 0.7 - (offset - 1) * 0.2;
-
-                      positionClasses = 'pointer-events-none shadow-lg shadow-black/20';
-                      positionStyles = {
-                        transform: `translateX(${translateX}%) scale(${scale})`,
-                        opacity: opacity,
-                        zIndex: 20 - offset,
-                      };
-                    }
+                    transform = 'translateX(0) scale(1) translateZ(0)';
+                    zIndex = 30;
+                    opacity = 1;
+                    pointerEvents = 'pointer-events-auto';
                   } else {
-                    // Cards waiting to be shown - stack on RIGHT side
-                    // Only show the first 2 cards in the queue
-                    const offset = index - activeMediaIndex;
+                    const sign = offset > 0 ? 1 : -1;
+                    const translateX = sign * (50 + (absOffset * 5)); // Percentage
+                    const scale = 0.85 - (absOffset * 0.1);
+                    const rotateY = sign * -15; // Slight 3D rotation
 
-                    if (offset > 2) {
-                      // Hide cards beyond the first 2 in queue
-                      positionClasses = 'pointer-events-none';
-                      positionStyles = {
-                        transform: 'translateX(80%) scale(0.75)',
-                        opacity: 0,
-                        zIndex: 0,
-                      };
-                    } else {
-                      // Show first 2 cards in queue, stacked on right
-                      const translateX = 40 + (offset - 1) * 12; // Stack with offset to right
-                      const scale = 0.88 - (offset - 1) * 0.06;
-                      const opacity = 0.7 - (offset - 1) * 0.2;
-
-                      positionClasses = 'pointer-events-none shadow-lg shadow-black/20';
-                      positionStyles = {
-                        transform: `translateX(${translateX}%) scale(${scale})`,
-                        opacity: opacity,
-                        zIndex: 20 - offset,
-                      };
-                    }
+                    transform = `translateX(${translateX}%) scale(${scale}) perspective(1000px) rotateY(${rotateY}deg)`;
+                    zIndex = 20 - absOffset;
+                    opacity = 0.5 - (absOffset * 0.15);
                   }
-
-                  const backgroundGradient = isActive
-                    ? 'from-white/40 via-white/20 to-white/10'
-                    : 'from-white/20 via-white/10 to-white/5';
-
-                  const isMediaItem = 'imageUrl' in item;
 
                   return (
                     <div
                       key={isMediaItem ? item.id : (item as typeof MEDIA_CARD_PLACEHOLDERS[number]).id}
-                      className={`absolute flex h-[36rem] w-full max-w-[28rem] overflow-hidden rounded-[2.5rem] border border-white/25 transition-all duration-500 ease-out ${positionClasses}`}
-                      style={positionStyles}
+                      className={`absolute aspect-video h-full max-h-[700px] w-auto transition-all duration-700 cubic-bezier(0.25, 1, 0.5, 1) ${pointerEvents}`}
+                      style={{
+                        transform,
+                        zIndex,
+                        opacity,
+                      }}
                       aria-hidden={!isActive}
                     >
-                      {isMediaItem ? (
-                        <div className="relative h-full w-full bg-slate-900">
-                          <Image
-                            src={item.imageUrl}
-                            alt={item.caption}
-                            fill
-                            className="object-contain"
-                            sizes="(max-width: 768px) 100vw, 28rem"
-                            priority={isActive}
-                            unoptimized
-                          />
-                          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/60 to-transparent px-6 pb-6 pt-20">
-                            <p className="text-sm font-medium leading-relaxed text-white drop-shadow-lg">
-                              {item.caption}
-                            </p>
-                            {item.attribution && (
-                              <p className="mt-2 text-xs text-white/70 drop-shadow">
-                                {item.attribution}
+                      <div className={`h-full w-full overflow-hidden rounded-[2.5rem] border border-white/10 bg-slate-900/80 shadow-2xl backdrop-blur-xl ${isActive ? 'shadow-indigo-500/20 ring-1 ring-white/20' : ''}`}>
+                        {isMediaItem ? (
+                          <div className="relative h-full w-full group">
+                            <Image
+                              src={item.imageUrl}
+                              alt={item.caption}
+                              fill
+                              className="object-cover transition-transform duration-700 group-hover:scale-105"
+                              sizes="(max-width: 768px) 100vw, 80vw"
+                              priority={isActive}
+                              unoptimized
+                            />
+                            <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/20 to-transparent opacity-80" />
+                            <div className="absolute inset-x-0 bottom-0 p-8 transform transition-transform duration-500 translate-y-2 group-hover:translate-y-0">
+                              <p className="text-lg font-medium leading-relaxed text-white drop-shadow-lg">
+                                {item.caption}
                               </p>
+                              {item.attribution && (
+                                <p className="mt-3 text-xs font-medium tracking-wider text-white/50 uppercase">
+                                  Source: {item.attribution}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex h-full w-full flex-col items-center justify-center bg-gradient-to-br from-white/5 to-transparent p-8 text-center">
+                            {isMediaLoading && isActive ? (
+                              <div className="flex flex-col items-center gap-6">
+                                <div className="relative h-16 w-16">
+                                  <div className="absolute inset-0 animate-ping rounded-full bg-indigo-500/20" />
+                                  <div className="relative flex h-full w-full items-center justify-center rounded-full border-2 border-indigo-400/30 border-t-indigo-400 animate-spin" />
+                                </div>
+                                <span className="text-sm font-medium tracking-[0.2em] text-indigo-200/70 uppercase animate-pulse">
+                                  Generating Visuals...
+                                </span>
+                              </div>
+                            ) : (
+                              <div className="flex flex-col items-center gap-4 text-white/20">
+                                <div className="rounded-full bg-white/5 p-6 backdrop-blur-sm">
+                                  <svg className="h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                                  </svg>
+                                </div>
+                                <span className="text-sm font-medium tracking-[0.2em] uppercase">
+                                  {(item as typeof MEDIA_CARD_PLACEHOLDERS[number]).label}
+                                </span>
+                              </div>
                             )}
                           </div>
-                        </div>
-                      ) : (
-                        <div className={`flex h-full w-full items-center justify-center bg-gradient-to-br ${backgroundGradient} backdrop-blur-xl`}>
-                          {isMediaLoading ? (
-                            <div className="flex flex-col items-center gap-4">
-                              <div className="h-12 w-12 animate-spin rounded-full border-4 border-white/20 border-t-white/80" />
-                              <span className="text-sm font-semibold uppercase tracking-[0.3em] text-white/70">
-                                Loading...
-                              </span>
-                            </div>
-                          ) : (
-                            <span className="text-sm font-semibold uppercase tracking-[0.3em] text-white/70">
-                              {(item as typeof MEDIA_CARD_PLACEHOLDERS[number]).label}
-                            </span>
-                          )}
-                        </div>
-                      )}
+                        )}
+                      </div>
                     </div>
                   );
                 })}
               </div>
 
-              {/* Right navigation button */}
               {canGoToNext && (
                 <button
                   onClick={goToNextMediaCard}
-                  className="absolute right-0 top-1/2 z-40 -translate-y-1/2 rounded-full bg-white/20 p-3 backdrop-blur-md transition-all hover:bg-white/30 hover:scale-110 active:scale-95"
+                  className="absolute right-4 top-1/2 z-40 -translate-y-1/2 rounded-full border border-white/10 bg-white/5 p-4 text-white/70 backdrop-blur-md transition-all hover:bg-white/10 hover:text-white hover:scale-110 active:scale-95 group"
                   aria-label="Next image"
                 >
-                  <svg
-                    className="h-6 w-6 text-white"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M9 5l7 7-7 7"
-                    />
+                  <svg className="h-6 w-6 transition-transform group-hover:translate-x-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                   </svg>
                 </button>
               )}
 
-              {/* Instagram-style dots indicator */}
+              {/* Pagination Dots */}
               {totalMediaItems > 1 && (
-                <div className="absolute bottom-6 left-1/2 z-40 flex -translate-x-1/2 gap-2">
+                <div className="absolute -bottom-8 left-1/2 z-40 flex -translate-x-1/2 gap-3">
                   {Array.from({ length: totalMediaItems }).map((_, index) => (
                     <button
                       key={index}
                       onClick={() => setActiveMediaIndex(index)}
-                      className={`h-2 rounded-full transition-all duration-300 ${index === activeMediaIndex
-                          ? 'w-8 bg-white'
-                          : 'w-2 bg-white/40 hover:bg-white/60'
+                      className={`h-1.5 rounded-full transition-all duration-500 ${index === activeMediaIndex
+                        ? 'w-8 bg-white shadow-[0_0_10px_rgba(255,255,255,0.5)]'
+                        : 'w-1.5 bg-white/20 hover:bg-white/40'
                         }`}
                       aria-label={`Go to image ${index + 1}`}
                     />
@@ -1508,99 +1461,110 @@ export default function CallInterface() {
                 </div>
               )}
             </div>
-            <div className="mt-16 rounded-3xl border border-white/20 bg-white/10 p-8 backdrop-blur-md">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-semibold uppercase tracking-[0.3em] text-white/70">
-                  Live status
-                </span>
-                <div className="flex items-center gap-2">
-                  <span
-                    className={`h-3 w-3 rounded-full shadow-lg ${statusIndicatorColor}`}
-                  />
-                  <span className="text-sm font-medium capitalize">
-                    {callStatus}
+
+            {/* Visualizer Section */}
+            <div className="mt-12 rounded-3xl border border-white/10 bg-white/5 p-8 backdrop-blur-xl shadow-2xl">
+              <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center gap-3">
+                  <div className={`relative flex h-3 w-3`}>
+                    <span className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-75 ${statusIndicatorColor}`} />
+                    <span className={`relative inline-flex h-3 w-3 rounded-full ${statusIndicatorColor}`} />
+                  </div>
+                  <span className="text-xs font-bold tracking-[0.2em] text-white/90 uppercase">
+                    {callStatus === 'listening' ? 'Listening' : callStatus === 'speaking' ? 'Speaking' : callStatus === 'processing' ? 'Processing' : 'Standby'}
                   </span>
                 </div>
+                <div className="text-[10px] font-medium tracking-wider text-white/40 uppercase">
+                  Live Audio Stream
+                </div>
               </div>
-              <div className="mt-8 flex h-32 items-end justify-between gap-1">
-                {[...Array(24)].map((_, i) => {
-                  // Use deterministic heights based on index to avoid hydration mismatch
-                  const baseHeight = 15 + ((i * 7) % 20);
-                  const listeningHeight = 30 + ((i * 13) % 60);
+
+              <div className="flex h-24 items-end justify-between gap-1.5 px-2">
+                {[...Array(32)].map((_, i) => {
+                  const baseHeight = 10 + Math.sin(i * 0.5) * 5;
+                  const listeningHeight = 20 + Math.random() * 60;
+                  const speakingHeight = 30 + Math.sin(Date.now() / 100 + i) * 40; // Simulated
 
                   return (
                     <div
                       key={i}
-                      className={`flex-1 rounded-full bg-gradient-to-t from-white/20 via-white/60 to-white transition-all duration-300 ${callStatus === 'listening' ? 'animate-wave' : ''
+                      className={`flex-1 rounded-full transition-all duration-150 ease-in-out ${callStatus === 'listening'
+                        ? 'bg-gradient-to-t from-rose-500 to-rose-300 shadow-[0_0_10px_rgba(244,63,94,0.5)]'
+                        : callStatus === 'speaking'
+                          ? 'bg-gradient-to-t from-emerald-500 to-emerald-300 shadow-[0_0_10px_rgba(16,185,129,0.5)]'
+                          : callStatus === 'processing'
+                            ? 'bg-gradient-to-t from-amber-500 to-amber-300 animate-pulse'
+                            : 'bg-white/10'
                         }`}
                       style={{
-                        height:
-                          callStatus === 'listening'
-                            ? `${listeningHeight}%`
+                        height: callStatus === 'listening'
+                          ? `${listeningHeight}%`
+                          : callStatus === 'speaking'
+                            ? `${30 + Math.random() * 50}%` // Simple random for now, ideally driven by audio data
                             : `${baseHeight}%`,
-                        animationDelay: `${i * 0.05}s`,
                       }}
                     />
                   );
                 })}
               </div>
-              <p className="mt-6 text-xs font-medium text-white/70">
-                {statusHelperText}
-              </p>
+
+              <div className="mt-6 flex items-center justify-between border-t border-white/5 pt-4">
+                <p className="text-sm font-medium text-indigo-200/80">
+                  {statusHelperText}
+                </p>
+                {callStatus === 'processing' && (
+                  <div className="h-1 w-24 overflow-hidden rounded-full bg-white/10">
+                    <div className="h-full w-1/2 animate-[shimmer_1s_infinite] bg-gradient-to-r from-transparent via-white/30 to-transparent" />
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </section>
 
-        <section className="flex min-h-screen w-full flex-col bg-slate-900/60 backdrop-blur lg:h-full lg:w-[30%] lg:min-h-0 lg:overflow-hidden xl:w-[30%]">
-          <div className="flex items-start justify-between px-6 pb-6 pt-10">
+        {/* Sidebar / Chat Area */}
+        <section className="flex min-h-screen w-full flex-col border-l border-white/5 bg-slate-950 lg:h-full lg:w-[30%] lg:min-h-0 lg:overflow-hidden xl:w-[25%]">
+          <div className="flex flex-col gap-6 px-8 pb-6 pt-10">
             <div>
-              <h2 className="text-2xl font-semibold text-white">
-                Persona Call Interface
+              <h2 className="text-2xl font-bold tracking-tight text-white">
+                Concierge
               </h2>
-              <p className="mt-1 text-sm text-gray-400">
-                Start a call, then hold the button to speak with your concierge.
+              <p className="mt-2 text-sm leading-relaxed text-slate-400">
+                Your personal AI expert interface. Start a call to begin the conversation.
               </p>
             </div>
-          </div>
 
-          <div className="px-6">
-            {currentExpert ? (
-              <ExpertBadge expert={currentExpert} />
-            ) : (
-              <div className="flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-gray-300">
-                <svg
-                  className="h-4 w-4"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M9 19V6l12-2v13"
-                  />
-                </svg>
-                Expert not assigned yet
-              </div>
-            )}
-          </div>
+            <div className="h-px w-full bg-gradient-to-r from-white/10 to-transparent" />
 
-          <div className="px-6 pt-6">
-            <div className="flex items-center justify-between rounded-2xl border border-white/5 bg-slate-900/40 px-4 py-3">
-              <div className="flex items-center gap-2 text-sm text-gray-300">
-                <span
-                  className={`h-2.5 w-2.5 rounded-full ${statusIndicatorColor}`}
-                />
-                <span className="font-medium capitalize">
+            <div>
+              {currentExpert ? (
+                <div className="animate-in fade-in slide-in-from-left-4 duration-500">
+                  <ExpertBadge expert={currentExpert} />
+                </div>
+              ) : (
+                <div className="flex items-center gap-3 rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3 text-sm text-slate-500 transition-colors hover:bg-white/[0.04]">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white/5">
+                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                    </svg>
+                  </div>
+                  <span>Expert not assigned yet</span>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between rounded-xl border border-white/5 bg-slate-900/50 px-4 py-3 backdrop-blur-sm">
+              <div className="flex items-center gap-2.5 text-sm">
+                <span className={`h-2 w-2 rounded-full shadow-[0_0_8px_currentColor] ${statusIndicatorColor.replace('bg-', 'text-').replace('400', '500')} bg-current`} />
+                <span className="font-medium text-slate-300 capitalize tracking-wide">
                   {callStatus}
                 </span>
               </div>
-              {sessionId ? (
-                <span className="text-xs text-gray-500">
+              {sessionId && (
+                <span className="font-mono text-[10px] text-slate-500">
                   Session {sessionId.slice(0, 8)}...
                 </span>
-              ) : null}
+              )}
             </div>
           </div>
 
@@ -1675,8 +1639,8 @@ export default function CallInterface() {
             onClick={isActive ? handleStopCall : handleStartCall}
             disabled={isCallButtonDisabled}
             className={`flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold transition-all duration-200 ${isActive
-                ? 'bg-rose-500 text-white hover:bg-rose-600'
-                : 'bg-emerald-500 text-white hover:bg-emerald-600'
+              ? 'bg-rose-500 text-white hover:bg-rose-600'
+              : 'bg-emerald-500 text-white hover:bg-emerald-600'
               } ${isCallButtonDisabled ? 'cursor-not-allowed opacity-70 hover:bg-emerald-500' : ''}`}
           >
             {isActive ? (
@@ -1729,10 +1693,10 @@ export default function CallInterface() {
             }}
             disabled={isHoldDisabled}
             className={`flex min-w-[160px] items-center justify-center gap-2 rounded-full px-6 py-3 text-sm font-semibold transition-all duration-200 ${isHolding
-                ? 'bg-blue-600 text-white shadow-lg'
-                : isHoldDisabled
-                  ? 'bg-slate-200 text-slate-500'
-                  : 'bg-blue-500 text-white hover:bg-blue-600 shadow-lg/50'
+              ? 'bg-blue-600 text-white shadow-lg'
+              : isHoldDisabled
+                ? 'bg-slate-200 text-slate-500'
+                : 'bg-blue-500 text-white hover:bg-blue-600 shadow-lg/50'
               }`}
           >
             {isHolding ? 'Release to send' : 'Hold to talk'}

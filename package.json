@@ -13,8 +13,10 @@
   },
   "dependencies": {
     "@deepgram/sdk": "^4.11.2",
+    "@neondatabase/serverless": "^1.0.2",
     "@vercel/blob": "^2.0.0",
     "@vercel/functions": "^3.3.3",
+    "@vercel/postgres": "^0.10.0",
     "axios": "^1.13.1",
     "next": "16.0.1",
     "openai": "^6.7.0",
