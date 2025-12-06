@@ -69,53 +69,36 @@ class StreamingAudioPlayer {
       source.buffer = audioBuffer;
       source.connect(context.destination);
 
-      let settled = false;
-
       const cleanup = () => {
-        if (settled) return;
-        settled = true;
         source.onended = null;
         try {
           source.disconnect();
         } catch {
           // ignore disconnect errors
         }
-        if (signal) {
-          signal.removeEventListener('abort', handleAbort);
-        }
         this.activeSources.delete(source);
-        resolve();
       };
-
-      const handleAbort = () => {
-        try {
-          source.stop();
-        } catch {
-          // ignore stop errors
-        }
-        cleanup();
-      };
-
-      if (signal) {
-        signal.addEventListener('abort', handleAbort, { once: true });
-      }
 
       source.onended = cleanup;
 
+      // Only handle abort for the setup phase
+      if (signal?.aborted) {
+        cleanup();
+        resolve();
+        return;
+      }
+
       const now = context.currentTime;
-      const startAt = Math.max(this.queueTime, now) + 0.01;
+      // Small lookahead to prevent glitching if we are late
+      const startAt = Math.max(this.queueTime, now + 0.05);
       this.queueTime = startAt + audioBuffer.duration;
       this.activeSources.add(source);
 
       try {
         source.start(startAt);
+        resolve(); // Resolve immediately after scheduling
       } catch (error) {
-        if (settled) return;
-        settled = true;
-        if (signal) {
-          signal.removeEventListener('abort', handleAbort);
-        }
-        this.activeSources.delete(source);
+        cleanup();
         reject(
           error instanceof Error
             ? error

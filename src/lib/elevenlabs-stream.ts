@@ -47,6 +47,9 @@ export async function createElevenLabsRealtimeStream(
     throw new Error('Voice ID required for ElevenLabs realtime stream.');
   }
 
+  // Small delay to help avoid rate limiting on rapid successive calls
+  await new Promise(resolve => setTimeout(resolve, 100));
+
   const url = `wss://api.elevenlabs.io/v1/text-to-speech/${voiceId}/stream-input?model_id=${modelId}&output_format=pcm_16000`;
 
   const ws = new WebSocket(url, {

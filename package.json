@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@deepgram/sdk": "^4.11.2",
+    "@elevenlabs/elevenlabs-js": "^2.26.0",
     "@neondatabase/serverless": "^1.0.2",
     "@vercel/blob": "^2.0.0",
     "@vercel/functions": "^3.3.3",

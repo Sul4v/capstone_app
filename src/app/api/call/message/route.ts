@@ -3,10 +3,7 @@ import { randomUUID } from 'crypto';
 import { transcribeAudio } from '@/lib/deepgram';
 import { routeToExpert } from '@/lib/router';
 import { streamExpertResponse } from '@/lib/persona-llm';
-import {
-  createElevenLabsRealtimeStream,
-  type ElevenLabsRealtimeStream,
-} from '@/lib/elevenlabs-stream';
+import { textToSpeechStream } from '@/lib/elevenlabs-sdk';
 import {
   getSession,
   setSessionExpert,
@@ -60,103 +57,85 @@ type StreamPayload =
   | { type: 'error'; message: string }
   | { type: 'done' };
 
-const textEncoder = new TextEncoder();
-
 function enqueuePayload(
   controller: ReadableStreamDefaultController<Uint8Array>,
   payload: StreamPayload,
-): void {
-  try {
-    controller.enqueue(textEncoder.encode(`${JSON.stringify(payload)}\n`));
-  } catch (error) {
-    const message =
-      error instanceof Error ? error.message : String(error ?? 'Unknown');
-
-    if (
-      message.includes('Controller is already closed') ||
-      message.includes('closed')
-    ) {
-      // Stream is already done/closed, ignore additional payloads.
-      return;
-    }
-
-    throw error;
-  }
+) {
+  const json = JSON.stringify(payload);
+  controller.enqueue(new TextEncoder().encode(json + '\n'));
 }
 
-function extractChunks(buffer: string): {
-  ready: string[];
-  remainder: string;
-} {
-  const ready: string[] = [];
-  let start = 0;
-
-  for (let i = 0; i < buffer.length; i += 1) {
-    const char = buffer[i];
-    if (char === '.' || char === '!' || char === '?') {
-      const nextChar = buffer[i + 1];
-      if (!nextChar || /\s/.test(nextChar)) {
-        const sentence = buffer.slice(start, i + 1).trim();
-        if (sentence) {
-          ready.push(sentence);
-        }
-        start = i + 1;
-        while (start < buffer.length && /\s/.test(buffer[start])) {
-          start += 1;
-        }
-        i = start - 1;
-      }
-    }
-  }
-
-  return {
-    ready,
-    remainder: buffer.slice(start),
-  };
-}
-
-export async function POST(request: Request): Promise<NextResponse> {
+export async function POST(request: Request) {
+  let sessionId: string | null = null;
   const startTime = Date.now();
-
   try {
-    const formData = await request.formData();
-    const sessionId = formData.get('sessionId');
-    const audioFile = formData.get('audio');
-    const userName = formData.get('userName') as string | null;
+    const contentType = request.headers.get('content-type') ?? '';
+    let message: string | null = null;
+    let audioBase64: string | null = null;
 
-    if (typeof sessionId !== 'string' || !sessionId.trim()) {
+    sessionId = request.headers.get('x-session-id');
+    const userName = request.headers.get('x-user-name');
+    if (!sessionId) {
+      sessionId = randomUUID();
+      createSession(sessionId);
+      console.log(`[Session ${sessionId}] No session provided, created new session`);
+    }
+    console.log(`[Session ${sessionId}] Processing message request (user: ${userName || 'anonymous'})`);
+
+    if (contentType.includes('application/json')) {
+      const json = await request.json();
+      message = json.message ?? null;
+      audioBase64 = json.audioBase64 ?? null;
+    } else if (contentType.includes('multipart/form-data')) {
+      const formData = await request.formData();
+      message = formData.get('message') as string | null;
+      const audioFile = formData.get('audio') as File | null;
+      if (audioFile) {
+        const arrayBuffer = await audioFile.arrayBuffer();
+        audioBase64 = Buffer.from(arrayBuffer).toString('base64');
+      }
+    } else if (
+      contentType.includes('audio/') ||
+      contentType.includes('application/octet-stream')
+    ) {
+      const arrayBuffer = await request.arrayBuffer();
+      audioBase64 = Buffer.from(arrayBuffer).toString('base64');
+    }
+
+    if (!message && !audioBase64) {
       return NextResponse.json(
-        { success: false, error: 'Missing sessionId.' },
+        {
+          success: false,
+          error: 'Either message or audio is required.',
+        },
         { status: 400 },
       );
     }
 
-    if (!(audioFile instanceof File)) {
-      return NextResponse.json(
-        { success: false, error: 'Missing audio file.' },
-        { status: 400 },
+    let transcript: string;
+    if (!message && audioBase64) {
+      console.log(`[Session ${sessionId}] Step 1: Transcribing audio...`);
+      const transcriptionStart = Date.now();
+      // Convert base64 to Blob for Deepgram
+      const audioBuffer = Buffer.from(audioBase64, 'base64');
+      const audioBlob = new Blob([audioBuffer], { type: 'audio/webm' });
+      transcript = await transcribeAudio(audioBlob);
+      console.log(
+        `[Session ${sessionId}] Transcription took ${Date.now() - transcriptionStart}ms: "${transcript.substring(0, 100)}${transcript.length > 100 ? '...' : ''}"`,
+      );
+    } else {
+      transcript = message!;
+      console.log(
+        `[Session ${sessionId}] Using text message: "${transcript.substring(0, 100)}${transcript.length > 100 ? '...' : ''}"`,
       );
     }
 
-    let session = getSession(sessionId);
-    if (!session) {
-      console.warn(
-        `[Session ${sessionId}] Session not found (likely due to server restart). Recreating...`,
-      );
-      session = createSession(sessionId);
-    }
-
-    console.log(`[Session ${sessionId}] Step 1: Transcribing audio...`);
-    const transcribeStart = Date.now();
-    const transcript = await transcribeAudio(audioFile);
-    console.log(
-      `[Session ${sessionId}] Transcription took ${Date.now() - transcribeStart
-      }ms`,
-    );
-
-    if (!transcript?.trim()) {
+    if (!transcript || transcript.trim().length === 0) {
       return NextResponse.json(
-        { success: false, error: 'No speech detected.' },
+        {
+          success: false,
+          error: 'Unable to process audio. Please try again.',
+        },
         { status: 400 },
       );
     }
@@ -169,15 +148,24 @@ export async function POST(request: Request): Promise<NextResponse> {
     };
     addMessageToSession(sessionId, userMessage);
 
-    let expert = session.expert;
-    const previousExpertName = expert?.name;
+    let session = getSession(sessionId);
+    if (!session) {
+      createSession(sessionId);
+      session = getSession(sessionId);
+    }
+    if (!session) {
+      throw new Error('Failed to initialize session');
+    }
+
+    console.log(`[Session ${sessionId}] Step 2: Routing to expert...`);
     const routeStart = Date.now();
+    const previousExpertName = session.expert?.name ?? undefined;
     const routedExpert = await routeToExpert(transcript, {
       conversationHistory: session.conversationHistory,
       currentExpertName: previousExpertName,
     });
-    const voiceIdFromRouter = resolveVoiceId(routedExpert);
-    expert = { ...routedExpert, voiceId: voiceIdFromRouter };
+
+    const expert: Expert = routedExpert;
     setSessionExpert(sessionId, expert);
 
     console.log(
@@ -207,130 +195,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     const stream = new ReadableStream<Uint8Array>({
       start: async controller => {
         const chunkStart = Date.now();
-        const queueStartTime = Date.now();
         let fullResponse = '';
-        let buffer = '';
-        let chunkIndex = 0;
         let llmDuration = 0;
-        let pendingChunk = '';
-        let flushTimeout: NodeJS.Timeout | null = null;
-        let ttsClosed = false;
-        let ttsFinal = false;
-        let ttsResolve: (() => void) | null = null;
-        const ttsCompleted = new Promise<void>(resolve => {
-          ttsResolve = resolve;
-        });
-        const pendingChunkTexts: Array<{ index: number; text: string }> = [];
-        let nextChunkIndex = 0;
-
-        const CHAR_THRESHOLD_START = 50; // Fast start
-        const CHAR_THRESHOLD_STABLE = 150; // Stable playback
-        const WORD_THRESHOLD = 24;
-        const CHUNK_DELAY_MS = 220;
-
-        let streamingError: string | null = null;
-        let hasStreamedAudio = false;
-        let ttsStream: ElevenLabsRealtimeStream | null = null;
-        let isFirstChunk = true;
-
-        ttsStream = await createElevenLabsRealtimeStream(
-          {
-            voiceId,
-            modelId: 'eleven_flash_v2_5',
-            voiceSettings: {
-              stability: 0.5,
-              similarity_boost: 0.75,
-              use_speaker_boost: false,
-            },
-            generationConfig: {
-              chunk_length_schedule: [80, 120, 180, 240],
-            },
-          },
-          {
-            onAudio: audioBase64 => {
-              chunkIndex += 1;
-              const queuedChunk = pendingChunkTexts.length ? pendingChunkTexts.shift() : null;
-              const chunkText = queuedChunk?.text ?? '';
-              enqueuePayload(controller, {
-                type: 'audio_chunk',
-                index: chunkIndex,
-                text: chunkText,
-                audioBase64,
-              });
-              hasStreamedAudio = true;
-            },
-            onFinal: () => {
-              ttsFinal = true;
-              if (!ttsClosed) {
-                ttsResolve?.();
-              }
-            },
-            onError: error => {
-              if (
-                error.message?.includes('input_timeout_exceeded') &&
-                hasStreamedAudio
-              ) {
-                console.warn(
-                  `[Session ${sessionId}] ElevenLabs stream reported input timeout after audio streamed. Treating as graceful completion.`,
-                );
-                return;
-              }
-              streamingError = error.message;
-            },
-            onClose: () => {
-              ttsClosed = true;
-              ttsResolve?.();
-            },
-          },
-        );
-
-        const clearFlushTimeout = () => {
-          if (flushTimeout) {
-            clearTimeout(flushTimeout);
-            flushTimeout = null;
-          }
-        };
-
-        const flushPendingChunk = () => {
-          const chunkToSend = pendingChunk.trim();
-          if (chunkToSend) {
-            nextChunkIndex += 1;
-            pendingChunkTexts.push({
-              index: nextChunkIndex,
-              text: chunkToSend,
-            });
-            ttsStream?.sendText(chunkToSend, { flush: true });
-            pendingChunk = '';
-            isFirstChunk = false; // Switch to stable threshold after first flush
-          }
-          clearFlushTimeout();
-        };
-
-        const shouldFlush = (chunk: string): boolean => {
-          const threshold = isFirstChunk ? CHAR_THRESHOLD_START : CHAR_THRESHOLD_STABLE;
-
-          if (chunk.length >= threshold) {
-            return true;
-          }
-          const wordCount = chunk.split(/\s+/).filter(Boolean).length;
-          return wordCount >= WORD_THRESHOLD;
-        };
-
-        const appendToPending = (sentence: string) => {
-          pendingChunk = pendingChunk
-            ? `${pendingChunk.trim()} ${sentence.trim()}`
-            : sentence.trim();
-
-          if (shouldFlush(pendingChunk)) {
-            flushPendingChunk();
-            return;
-          }
-
-          clearFlushTimeout();
-          flushTimeout = setTimeout(() => {
-            flushPendingChunk();
-          }, CHUNK_DELAY_MS);
-        };
 
         try {
           enqueuePayload(controller, {
@@ -354,6 +220,7 @@ export async function POST(request: Request): Promise<NextResponse> {
             session.conversationHistory,
           );
 
+          // Stream text to client as LLM generates it
           for await (const part of llmStream) {
             const delta = part.choices?.[0]?.delta?.content ?? '';
             if (!delta) {
@@ -361,26 +228,84 @@ export async function POST(request: Request): Promise<NextResponse> {
             }
             enqueuePayload(controller, { type: 'text_delta', delta });
             fullResponse += delta;
-            buffer += delta;
-
-            const { ready, remainder } = extractChunks(buffer);
-            ready.forEach(sentence => appendToPending(sentence));
-            buffer = remainder;
           }
           llmDuration = Date.now() - llmStreamStart;
 
-          if (buffer.trim()) {
-            appendToPending(buffer);
-            buffer = '';
-          }
+          console.log(
+            `[Session ${sessionId}] LLM response complete in ${llmDuration}ms. Starting TTS...`,
+          );
 
-          flushPendingChunk();
+          // Now convert the full text to speech using ElevenLabs SDK
+          // The SDK has built-in retry logic and better error handling
+          if (fullResponse.trim()) {
+            try {
+              const ttsStart = Date.now();
+              const audioStream = await textToSpeechStream({
+                voiceId,
+                text: fullResponse.trim(),
+                modelId: 'eleven_flash_v2_5',
+                voiceSettings: {
+                  stability: 0.5,
+                  similarityBoost: 0.75,
+                },
+              });
 
-          ttsStream?.end();
-          await ttsCompleted;
+              // Read audio stream and send chunks to client
+              const reader = audioStream.getReader();
+              let chunkIndex = 0;
+              let leftover: Uint8Array | null = null;
 
-          if (streamingError) {
-            throw new Error(streamingError);
+              while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                if (value) {
+                  let data = value;
+
+                  // Handle leftover bytes from previous chunk
+                  if (leftover) {
+                    const combined = new Uint8Array(leftover.length + value.length);
+                    combined.set(leftover);
+                    combined.set(value, leftover.length);
+                    data = combined;
+                    leftover = null;
+                  }
+
+                  // Ensure data length is even (multiple of 2 for 16-bit PCM)
+                  if (data.length % 2 !== 0) {
+                    leftover = data.slice(data.length - 1);
+                    data = data.slice(0, data.length - 1);
+                  }
+
+                  if (data.length > 0) {
+                    chunkIndex++;
+                    const audioBase64 = Buffer.from(data).toString('base64');
+                    enqueuePayload(controller, {
+                      type: 'audio_chunk',
+                      index: chunkIndex,
+                      text: '', // Text was already streamed
+                      audioBase64,
+                    });
+                  }
+                }
+              }
+
+              console.log(
+                `[Session ${sessionId}] TTS complete in ${Date.now() - ttsStart}ms (${chunkIndex} chunks)`,
+              );
+            } catch (ttsError) {
+              // Log TTS error but don't fail the whole request
+              // The text response has already been sent
+              console.error(
+                `[Session ${sessionId}] TTS error (non-fatal):`,
+                ttsError instanceof Error ? ttsError.message : ttsError,
+              );
+              // Notify client that audio is unavailable
+              enqueuePayload(controller, {
+                type: 'error',
+                message: `Audio generation failed: ${ttsError instanceof Error ? ttsError.message : 'Unknown error'}. Text response is still available.`,
+              });
+            }
           }
 
           const expertMessage: Message = {
@@ -390,7 +315,7 @@ export async function POST(request: Request): Promise<NextResponse> {
             timestamp: new Date(),
             expertName: expert.name,
           };
-          addMessageToSession(sessionId, expertMessage);
+          addMessageToSession(sessionId!, expertMessage);
 
           const processingTime = Date.now() - startTime;
           enqueuePayload(controller, {
@@ -400,11 +325,11 @@ export async function POST(request: Request): Promise<NextResponse> {
           });
 
           console.log(
-            `[Session ${sessionId}] Streaming completed in ${processingTime}ms (LLM: ${llmDuration}ms, total chunks: ${chunkIndex})`,
+            `[Session ${sessionId}] Streaming completed in ${processingTime}ms (LLM: ${llmDuration}ms)`,
           );
 
           // Save interaction to database (fire and forget)
-          saveInteraction(sessionId, transcript, fullResponse.trim(), expert.name, userName || undefined).catch(err => {
+          saveInteraction(sessionId!, transcript, fullResponse.trim(), expert.name, userName || undefined).catch(err => {
             console.error(`[Session ${sessionId}] Failed to save interaction in background:`, err);
           });
         } catch (error) {
@@ -418,16 +343,11 @@ export async function POST(request: Request): Promise<NextResponse> {
             message,
           });
         } finally {
-          if (!ttsFinal) {
-            ttsStream?.close();
-          }
           enqueuePayload(controller, { type: 'done' });
           console.log(
-            `[Session ${sessionId}] Stream finalized after ${Date.now() - chunkStart
-            }ms (queue start: ${queueStartTime})`,
+            `[Session ${sessionId}] Stream finalized after ${Date.now() - chunkStart}ms`,
           );
           controller.close();
-          clearFlushTimeout();
         }
       },
     });
