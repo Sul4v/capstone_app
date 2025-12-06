@@ -137,6 +137,9 @@ export default function CallInterface() {
   const [personaVideoPath, setPersonaVideoPath] = useState<string | null>(null);
   const [hasVideo, setHasVideo] = useState(false);
   const lastFetchedExpertRef = useRef<string | null>(null);
+  const [failedImageIds, setFailedImageIds] = useState<Set<string>>(new Set());
+  const [textInput, setTextInput] = useState('');
+  const [showExpertDetails, setShowExpertDetails] = useState(false);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -812,6 +815,317 @@ export default function CallInterface() {
     addSystemMessage('Recording canceled.');
   }, [addSystemMessage, cancelActiveRecording, isHolding, setStatus]);
 
+  const handleSendTextMessage = useCallback(async () => {
+    if (!textInput.trim() || !isActive || isProcessing || isSpeaking) {
+      return;
+    }
+
+    const textMessage = textInput.trim();
+    setTextInput(''); // Clear input immediately
+
+    let processingMessageId: string | null = null;
+    let expertMessageId: string | null = null;
+    let streamingError: string | null = null;
+    let fullExpertResponse = '';
+    const responseAbortController = new AbortController();
+    let hasStartedSpeaking = false;
+
+    try {
+      abortPendingMediaRequest();
+      resetMedia();
+      hasTriggeredMediaRef.current = false;
+      lastMediaRequestLengthRef.current = 0;
+      mediaRequestInFlightRef.current = null;
+      mediaContextRef.current = {
+        transcript: '',
+        responsePreview: '',
+        expertName: currentExpert?.name ?? undefined,
+        expertiseAreas: currentExpert?.expertiseAreas ?? undefined,
+      };
+
+      setStatus('processing');
+
+      if (!sessionIdRef.current) {
+        setStatus('idle');
+        return;
+      }
+
+      processingMessageId = createMessageId();
+      addMessage({
+        id: processingMessageId,
+        role: 'system',
+        content: 'Processing your question...',
+        timestamp: new Date(),
+      });
+
+      stopPlayback();
+      playbackAbortRef.current = responseAbortController;
+
+      const response = await fetch('/api/call/message', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-session-id': sessionIdRef.current,
+        },
+        body: JSON.stringify({ message: textMessage }),
+        signal: responseAbortController.signal,
+      });
+
+      if (!response.ok) {
+        let errorMessage = `Failed to process question (status ${response.status}).`;
+        try {
+          const errorJson = await response.json();
+          if (typeof errorJson?.error === 'string') {
+            errorMessage = errorJson.error;
+          } else if (typeof errorJson?.details === 'string') {
+            errorMessage = errorJson.details;
+          }
+        } catch {
+          // ignore JSON parse failure and fall back to default message
+        }
+        throw new Error(errorMessage);
+      }
+
+      const contentType = response.headers.get('content-type') ?? '';
+      if (!response.body || !contentType.includes('application/x-ndjson')) {
+        let fallbackError = 'Unexpected response from server.';
+        try {
+          const fallbackJson = await response.json();
+          fallbackError =
+            (typeof fallbackJson?.error === 'string' && fallbackJson.error) ||
+            (typeof fallbackJson?.details === 'string' && fallbackJson.details) ||
+            fallbackError;
+        } catch {
+          // ignore parse errors
+        }
+        throw new Error(fallbackError);
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      let transcriptAdded = false;
+
+      let playbackQueue: Promise<void> = Promise.resolve();
+
+      const enqueuePlayback = (audioBase64: string) => {
+        playbackQueue = playbackQueue.then(async () => {
+          if (responseAbortController.signal.aborted) {
+            return;
+          }
+          if (!hasStartedSpeaking) {
+            hasStartedSpeaking = true;
+            setStatus('speaking');
+          }
+          try {
+            await getStreamingPlayer().enqueue(
+              audioBase64,
+              responseAbortController.signal,
+            );
+          } catch (playbackError) {
+            if (
+              playbackError instanceof DOMException &&
+              playbackError.name === 'AbortError'
+            ) {
+              return;
+            }
+            throw playbackError;
+          }
+        });
+      };
+
+      const handleMetadata = (payload: Extract<StreamResponseMessage, { type: 'metadata' }>) => {
+        const cleanedTranscript = (payload.transcript ?? '').trim();
+
+        if (processingMessageId) {
+          removeMessage(processingMessageId);
+          processingMessageId = null;
+        }
+
+        if (cleanedTranscript) {
+          addMessage({
+            id: createMessageId(),
+            role: 'user',
+            content: cleanedTranscript,
+            timestamp: new Date(),
+          });
+          transcriptAdded = true;
+        }
+
+        if (payload.expert) {
+          setCurrentExpert({
+            name: payload.expert.name,
+            expertiseAreas: payload.expert.expertiseAreas,
+            reasoning: payload.expert.reasoning,
+          });
+        }
+
+        const expertName = payload.expert?.name ?? currentExpert?.name;
+        const expertiseAreas =
+          payload.expert?.expertiseAreas ?? currentExpert?.expertiseAreas;
+
+        mediaContextRef.current.transcript = cleanedTranscript;
+        mediaContextRef.current.expertName = expertName ?? undefined;
+        mediaContextRef.current.expertiseAreas = expertiseAreas ?? undefined;
+        mediaContextRef.current.responsePreview = '';
+
+        expertMessageId = createMessageId();
+        addMessage({
+          id: expertMessageId,
+          role: 'expert',
+          content: '',
+          timestamp: new Date(),
+          expertName: payload.expert?.name ?? currentExpert?.name,
+        });
+      };
+
+      const processLine = (line: string) => {
+        if (!line) return;
+
+        let payload: StreamResponseMessage;
+        try {
+          payload = JSON.parse(line) as StreamResponseMessage;
+        } catch (parseError) {
+          console.warn('Failed to parse stream payload:', parseError, line);
+          return;
+        }
+
+        switch (payload.type) {
+          case 'metadata':
+            handleMetadata(payload);
+            break;
+          case 'text_delta':
+            if (expertMessageId && typeof payload.delta === 'string') {
+              fullExpertResponse += payload.delta;
+              updateMessage(expertMessageId, message => ({
+                ...message,
+                content: fullExpertResponse,
+                timestamp: new Date(),
+              }));
+
+              // Update media context and trigger preview fetch
+              if (ENABLE_MEDIA_PREVIEW && expertMessageId) {
+                mediaContextRef.current.responsePreview = fullExpertResponse;
+                triggerMediaFetch('preview', expertMessageId);
+              }
+            }
+            break;
+          case 'audio_chunk':
+            if (typeof payload.audioBase64 === 'string') {
+              enqueuePlayback(payload.audioBase64);
+            }
+            break;
+          case 'complete':
+            if (
+              expertMessageId &&
+              typeof payload.text === 'string' &&
+              payload.text
+            ) {
+              fullExpertResponse = payload.text;
+              updateMessage(expertMessageId, message => ({
+                ...message,
+                content: fullExpertResponse,
+                timestamp: new Date(),
+              }));
+
+              // Final media fetch with complete response
+              mediaContextRef.current.responsePreview = fullExpertResponse;
+              if (expertMessageId) {
+                triggerMediaFetch('final', expertMessageId);
+              }
+            }
+            break;
+          case 'error':
+            streamingError =
+              payload.message ?? 'Processing failed. Please try again.';
+            break;
+          case 'done':
+          default:
+            break;
+        }
+      };
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        let newlineIndex = buffer.indexOf('\n');
+        while (newlineIndex !== -1) {
+          const line = buffer.slice(0, newlineIndex).trim();
+          buffer = buffer.slice(newlineIndex + 1);
+          processLine(line);
+          newlineIndex = buffer.indexOf('\n');
+        }
+      }
+
+      buffer += decoder.decode();
+      const remaining = buffer.trim();
+      if (remaining) {
+        processLine(remaining);
+      }
+
+      await playbackQueue;
+
+      if (responseAbortController.signal.aborted) {
+        return;
+      }
+
+      if (!transcriptAdded) {
+        addSystemMessage(
+          "I didn't catch anything there. Try holding the button and speaking again.",
+        );
+      }
+
+      if (streamingError) {
+        throw new Error(streamingError);
+      }
+
+      const nextStatus = isHoldingRef.current ? 'listening' : 'idle';
+      setStatus(nextStatus);
+    } catch (err) {
+      if (
+        err instanceof DOMException &&
+        err.name === 'AbortError'
+      ) {
+        setStatus('idle');
+        return;
+      }
+
+      handleError(err, 'send-text-message');
+
+      if (processingMessageId) {
+        removeMessage(processingMessageId);
+      }
+
+      if (!isHoldingRef.current) {
+        setStatus('idle');
+      } else {
+        setStatus('listening');
+      }
+    }
+  }, [
+    textInput,
+    isActive,
+    isProcessing,
+    isSpeaking,
+    currentExpert,
+    abortPendingMediaRequest,
+    resetMedia,
+    setStatus,
+    addMessage,
+    stopPlayback,
+    removeMessage,
+    setCurrentExpert,
+    updateMessage,
+    triggerMediaFetch,
+    getStreamingPlayer,
+    addSystemMessage,
+    handleError,
+    setTextInput,
+  ]);
+
   const handleHoldEnd = useCallback(async () => {
     if (!isHolding) return;
 
@@ -1255,15 +1569,15 @@ export default function CallInterface() {
 
       <div className="flex min-h-screen flex-col lg:h-full lg:min-h-0 lg:flex-row">
         {/* Main Content Area */}
-        <section className="relative hidden min-h-screen flex-col justify-between overflow-hidden lg:flex lg:w-[70%] xl:w-[75%] bg-slate-950">
+        <section className="relative hidden min-h-screen flex-col justify-between overflow-hidden lg:flex lg:w-[70%] xl:w-[75%] bg-slate-100">
           {/* Dynamic Background */}
-          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-indigo-900/40 via-slate-950 to-slate-950" />
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_bottom_left,_var(--tw-gradient-stops))] from-violet-900/20 via-slate-950 to-slate-950" />
+          <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top_right,_var(--tw-gradient-stops))] from-indigo-100/60 via-slate-50 to-white" />
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_bottom_left,_var(--tw-gradient-stops))] from-violet-100/40 via-slate-50 to-white" />
 
           {/* Animated Blobs */}
-          <div className="absolute -top-[20%] -left-[10%] h-[50vw] w-[50vw] rounded-full bg-indigo-600/10 blur-[120px] animate-pulse duration-[8000ms]" />
-          <div className="absolute top-[20%] right-[-10%] h-[40vw] w-[40vw] rounded-full bg-violet-600/10 blur-[100px] animate-pulse duration-[10000ms] delay-1000" />
-          <div className="absolute bottom-[-10%] left-[20%] h-[30vw] w-[30vw] rounded-full bg-blue-600/10 blur-[80px] animate-pulse duration-[12000ms] delay-2000" />
+          <div className="absolute -top-[20%] -left-[10%] h-[50vw] w-[50vw] rounded-full bg-indigo-200/20 blur-[120px] animate-pulse duration-[8000ms]" />
+          <div className="absolute top-[20%] right-[-10%] h-[40vw] w-[40vw] rounded-full bg-violet-200/15 blur-[100px] animate-pulse duration-[10000ms] delay-1000" />
+          <div className="absolute bottom-[-10%] left-[20%] h-[30vw] w-[30vw] rounded-full bg-blue-200/15 blur-[80px] animate-pulse duration-[12000ms] delay-2000" />
 
           {/* Expert Portrait (Top Right) */}
           <div
@@ -1379,26 +1693,58 @@ export default function CallInterface() {
                       <div className={`h-full w-full overflow-hidden rounded-[2.5rem] border border-white/10 bg-slate-900/80 shadow-2xl backdrop-blur-xl ${isActive ? 'shadow-indigo-500/20 ring-1 ring-white/20' : ''}`}>
                         {isMediaItem ? (
                           <div className="relative h-full w-full group">
-                            <Image
-                              src={item.imageUrl}
-                              alt={item.caption}
-                              fill
-                              className="object-cover transition-transform duration-700 group-hover:scale-105"
-                              sizes="(max-width: 768px) 100vw, 80vw"
-                              priority={isActive}
-                              unoptimized
-                            />
-                            <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/20 to-transparent opacity-80" />
-                            <div className="absolute inset-x-0 bottom-0 p-8 transform transition-transform duration-500 translate-y-2 group-hover:translate-y-0">
-                              <p className="text-lg font-medium leading-relaxed text-white drop-shadow-lg">
-                                {item.caption}
-                              </p>
-                              {item.attribution && (
-                                <p className="mt-3 text-xs font-medium tracking-wider text-white/50 uppercase">
-                                  Source: {item.attribution}
-                                </p>
-                              )}
-                            </div>
+                            {failedImageIds.has(item.id) ? (
+                              <div className="flex h-full w-full flex-col items-center justify-center bg-gradient-to-br from-rose-950/30 to-slate-950/30 p-8 text-center">
+                                <div className="rounded-full bg-rose-500/10 p-6 backdrop-blur-sm mb-4">
+                                  <svg className="h-12 w-12 text-rose-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                                  </svg>
+                                </div>
+                                <p className="text-lg font-medium text-rose-200/80 mb-2">Image Failed to Load</p>
+                                <p className="text-sm text-slate-400 max-w-md mb-4">This image couldn't be displayed. It may be blocked by an ad blocker, browser extension, or CORS policy.</p>
+                                <p className="text-xs text-slate-500">{item.caption}</p>
+                                {item.sourceUrl && (
+                                  <a
+                                    href={item.sourceUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="mt-4 inline-flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-xs font-medium text-white/70 transition-all hover:bg-white/20 hover:text-white"
+                                  >
+                                    <span>View Source</span>
+                                    <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                    </svg>
+                                  </a>
+                                )}
+                              </div>
+                            ) : (
+                              <>
+                                <Image
+                                  src={item.imageUrl}
+                                  alt={item.caption}
+                                  fill
+                                  className="object-contain transition-transform duration-700 group-hover:scale-105"
+                                  sizes="(max-width: 768px) 100vw, 80vw"
+                                  priority={isActive}
+                                  unoptimized
+                                  onError={() => {
+                                    console.error(`Failed to load image: ${item.id}`, item.imageUrl);
+                                    setFailedImageIds(prev => new Set(prev).add(item.id));
+                                  }}
+                                />
+                                <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-slate-950/20 to-transparent opacity-80" />
+                                <div className="absolute inset-x-0 bottom-0 p-8 transform transition-transform duration-500 translate-y-2 group-hover:translate-y-0">
+                                  <p className="text-lg font-medium leading-relaxed text-white drop-shadow-lg">
+                                    {item.caption}
+                                  </p>
+                                  {item.attribution && (
+                                    <p className="mt-3 text-xs font-medium tracking-wider text-white/50 uppercase">
+                                      Source: {item.attribution}
+                                    </p>
+                                  )}
+                                </div>
+                              </>
+                            )}
                           </div>
                         ) : (
                           <div className="flex h-full w-full flex-col items-center justify-center bg-gradient-to-br from-white/5 to-transparent p-8 text-center">
@@ -1463,18 +1809,18 @@ export default function CallInterface() {
             </div>
 
             {/* Visualizer Section */}
-            <div className="mt-12 rounded-3xl border border-white/10 bg-white/5 p-8 backdrop-blur-xl shadow-2xl">
+            <div className="mt-12 rounded-3xl border border-slate-200 bg-white p-8 shadow-lg">
               <div className="flex items-center justify-between mb-6">
                 <div className="flex items-center gap-3">
                   <div className={`relative flex h-3 w-3`}>
                     <span className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-75 ${statusIndicatorColor}`} />
                     <span className={`relative inline-flex h-3 w-3 rounded-full ${statusIndicatorColor}`} />
                   </div>
-                  <span className="text-xs font-bold tracking-[0.2em] text-white/90 uppercase">
+                  <span className="text-xs font-bold tracking-[0.2em] text-slate-700 uppercase">
                     {callStatus === 'listening' ? 'Listening' : callStatus === 'speaking' ? 'Speaking' : callStatus === 'processing' ? 'Processing' : 'Standby'}
                   </span>
                 </div>
-                <div className="text-[10px] font-medium tracking-wider text-white/40 uppercase">
+                <div className="text-[10px] font-medium tracking-wider text-slate-500 uppercase">
                   Live Audio Stream
                 </div>
               </div>
@@ -1494,7 +1840,7 @@ export default function CallInterface() {
                           ? 'bg-gradient-to-t from-emerald-500 to-emerald-300 shadow-[0_0_10px_rgba(16,185,129,0.5)]'
                           : callStatus === 'processing'
                             ? 'bg-gradient-to-t from-amber-500 to-amber-300 animate-pulse'
-                            : 'bg-white/10'
+                            : 'bg-slate-200'
                         }`}
                       style={{
                         height: callStatus === 'listening'
@@ -1508,13 +1854,13 @@ export default function CallInterface() {
                 })}
               </div>
 
-              <div className="mt-6 flex items-center justify-between border-t border-white/5 pt-4">
-                <p className="text-sm font-medium text-indigo-200/80">
+              <div className="mt-6 flex items-center justify-between border-t border-slate-200 pt-4">
+                <p className="text-sm font-medium text-indigo-600">
                   {statusHelperText}
                 </p>
                 {callStatus === 'processing' && (
-                  <div className="h-1 w-24 overflow-hidden rounded-full bg-white/10">
-                    <div className="h-full w-1/2 animate-[shimmer_1s_infinite] bg-gradient-to-r from-transparent via-white/30 to-transparent" />
+                  <div className="h-1 w-24 overflow-hidden rounded-full bg-slate-200">
+                    <div className="h-full w-1/2 animate-[shimmer_1s_infinite] bg-gradient-to-r from-transparent via-indigo-400 to-transparent" />
                   </div>
                 )}
               </div>
@@ -1523,49 +1869,44 @@ export default function CallInterface() {
         </section>
 
         {/* Sidebar / Chat Area */}
-        <section className="flex min-h-screen w-full flex-col border-l border-white/5 bg-slate-950 lg:h-full lg:w-[30%] lg:min-h-0 lg:overflow-hidden xl:w-[25%]">
+        <section className="flex min-h-screen w-full flex-col border-l border-slate-200 bg-white lg:h-full lg:w-[30%] lg:min-h-0 lg:overflow-hidden xl:w-[25%]">
           <div className="flex flex-col gap-6 px-8 pb-6 pt-10">
-            <div>
-              <h2 className="text-2xl font-bold tracking-tight text-white">
-                Concierge
-              </h2>
-              <p className="mt-2 text-sm leading-relaxed text-slate-400">
-                Your personal AI expert interface. Start a call to begin the conversation.
-              </p>
-            </div>
-
-            <div className="h-px w-full bg-gradient-to-r from-white/10 to-transparent" />
-
-            <div>
-              {currentExpert ? (
-                <div className="animate-in fade-in slide-in-from-left-4 duration-500">
-                  <ExpertBadge expert={currentExpert} />
-                </div>
-              ) : (
-                <div className="flex items-center gap-3 rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3 text-sm text-slate-500 transition-colors hover:bg-white/[0.04]">
-                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-white/5">
-                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                    </svg>
-                  </div>
-                  <span>Expert not assigned yet</span>
-                </div>
-              )}
-            </div>
-
-            <div className="flex items-center justify-between rounded-xl border border-white/5 bg-slate-900/50 px-4 py-3 backdrop-blur-sm">
-              <div className="flex items-center gap-2.5 text-sm">
-                <span className={`h-2 w-2 rounded-full shadow-[0_0_8px_currentColor] ${statusIndicatorColor.replace('bg-', 'text-').replace('400', '500')} bg-current`} />
-                <span className="font-medium text-slate-300 capitalize tracking-wide">
-                  {callStatus}
-                </span>
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-2xl font-bold tracking-tight text-slate-900">
+                  {currentExpert?.name || 'Concierge'}
+                </h2>
+                <p className="mt-2 text-sm leading-relaxed text-slate-600">
+                  {currentExpert
+                    ? `Expert in ${currentExpert.expertiseAreas?.join(', ') || 'various topics'}`
+                    : 'Your personal AI expert interface. Start a call to begin the conversation.'}
+                </p>
               </div>
-              {sessionId && (
-                <span className="font-mono text-[10px] text-slate-500">
-                  Session {sessionId.slice(0, 8)}...
-                </span>
+              {currentExpert && (
+                <button
+                  onClick={() => setShowExpertDetails(!showExpertDetails)}
+                  className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 text-slate-600 transition-all hover:bg-slate-100 hover:text-slate-900"
+                  aria-label="Toggle expert details"
+                >
+                  <svg
+                    className={`h-4 w-4 transition-transform duration-200 ${showExpertDetails ? 'rotate-180' : ''}`}
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
               )}
             </div>
+
+            <div className="h-px w-full bg-gradient-to-r from-slate-200 to-transparent" />
+
+            {currentExpert && showExpertDetails && (
+              <div className="animate-in slide-in-from-top-2 fade-in duration-200">
+                <ExpertBadge expert={currentExpert} />
+              </div>
+            )}
           </div>
 
           {isActive ? (
@@ -1597,7 +1938,7 @@ export default function CallInterface() {
           ) : null}
 
           <div className="mt-6 flex-1 px-6 pb-12 lg:min-h-0">
-            <div className="flex h-full flex-col overflow-hidden rounded-3xl border border-white/5 bg-slate-900/40 lg:min-h-0">
+            <div className="flex h-full flex-col overflow-hidden rounded-3xl border border-slate-200 bg-slate-50 lg:min-h-0">
               <div className="flex h-full min-h-0 flex-col overflow-y-auto px-6 py-6">
                 <div className="space-y-3">
                   {conversationHistory.length === 0 ? (
@@ -1628,13 +1969,45 @@ export default function CallInterface() {
                 </div>
                 <div ref={messagesEndRef} />
               </div>
+
+              {/* Text Input Box */}
+              {isActive && (
+                <div className="border-t border-slate-200 p-4">
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      handleSendTextMessage();
+                    }}
+                    className="flex gap-2"
+                  >
+                    <input
+                      type="text"
+                      value={textInput}
+                      onChange={(e) => setTextInput(e.target.value)}
+                      placeholder="Type a message..."
+                      disabled={!isActive || isProcessing || isSpeaking}
+                      className="flex-1 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-900 placeholder-slate-400 transition-all focus:border-indigo-400 focus:outline-none focus:ring-2 focus:ring-indigo-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                    />
+                    <button
+                      type="submit"
+                      disabled={!textInput.trim() || !isActive || isProcessing || isSpeaking}
+                      className="rounded-xl bg-indigo-500 px-4 py-2.5 text-sm font-semibold text-white transition-all hover:bg-indigo-600 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-indigo-500"
+                    >
+                      <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                      </svg>
+                    </button>
+                  </form>
+                </div>
+              )}
             </div>
           </div>
         </section>
       </div>
 
       <div className="pointer-events-none fixed bottom-6 left-1/2 z-40 w-full max-w-2xl -translate-x-1/2 px-4 lg:left-[35%] xl:left-[35%]">
-        <div className="pointer-events-auto flex flex-wrap items-center justify-center gap-3 rounded-full border border-white/20 bg-white/40 px-4 py-3 text-slate-900 shadow-xl backdrop-blur-lg">
+        <div className="pointer-events-auto flex flex-wrap items-center justify-center gap-3 rounded-full border border-slate-200 bg-white/90 px-4 py-3 text-slate-900 shadow-2xl backdrop-blur-lg">
+
           <button
             onClick={isActive ? handleStopCall : handleStartCall}
             disabled={isCallButtonDisabled}

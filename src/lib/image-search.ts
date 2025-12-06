@@ -10,6 +10,15 @@ import { MediaItem } from '@/types';
 const SERPAPI_KEY = process.env.SERPAPI_KEY;
 const SERPAPI_BASE = 'https://serpapi.com/search.json';
 
+/**
+ * Wrap an external image URL with our proxy to bypass ad blockers and CORS
+ */
+function proxyImageUrl(externalUrl: string): string {
+  // Encode the external URL as a query parameter
+  const encodedUrl = encodeURIComponent(externalUrl);
+  return `/api/image-proxy?url=${encodedUrl}`;
+}
+
 interface SerpApiImageResult {
   position: number;
   thumbnail: string;
@@ -95,9 +104,11 @@ async function searchGoogleImages(
           sourceName = image.source;
         }
 
+        const originalImageUrl = image.original || image.link;
+
         return {
           id: `google-${query.replace(/\s+/g, '-')}-${index}`,
-          imageUrl: image.original || image.link,
+          imageUrl: proxyImageUrl(originalImageUrl), // Route through proxy
           caption: image.title || query,
           sourceUrl: image.link,
           attribution: `Image from ${sourceName}`,
@@ -112,72 +123,6 @@ async function searchGoogleImages(
   }
 }
 
-/**
- * Fallback: Search for images on Unsplash (for when SerpApi is unavailable)
- */
-async function searchUnsplash(
-  query: string,
-  perPage: number = 1,
-): Promise<MediaItem[]> {
-  const UNSPLASH_ACCESS_KEY = process.env.UNSPLASH_ACCESS_KEY;
-
-  if (!UNSPLASH_ACCESS_KEY) {
-    return [];
-  }
-
-  try {
-    const url = new URL('https://api.unsplash.com/search/photos');
-    url.searchParams.set('query', query);
-    url.searchParams.set('per_page', String(perPage));
-    url.searchParams.set('orientation', 'landscape');
-    url.searchParams.set('content_filter', 'high');
-
-    const response = await fetch(url.toString(), {
-      headers: {
-        Authorization: `Client-ID ${UNSPLASH_ACCESS_KEY}`,
-      },
-    });
-
-    if (!response.ok) {
-      return [];
-    }
-
-    const data = await response.json();
-
-    if (!data.results || data.results.length === 0) {
-      return [];
-    }
-
-    return data.results.map(
-      (image: {
-        id: string;
-        urls: { regular: string };
-        alt_description: string | null;
-        description: string | null;
-        width: number;
-        height: number;
-        user: {
-          name: string;
-          links: { html: string };
-        };
-        links: { html: string };
-      }): MediaItem => ({
-        id: `unsplash-${image.id}`,
-        imageUrl: image.urls.regular,
-        caption: image.alt_description || image.description || query,
-        sourceUrl: image.links.html,
-        attribution: `Photo by ${image.user.name} on Unsplash`,
-        originalQuery: query,
-        width: image.width,
-        height: image.height,
-      }),
-    );
-  } catch (error) {
-    console.error('Error searching Unsplash:', error);
-    return [];
-  }
-}
-
 export interface SearchImagesOptions {
   query: string;
   caption?: string;
@@ -185,7 +130,7 @@ export interface SearchImagesOptions {
 }
 
 /**
- * Search for images (primary: Google via SerpApi, fallback: Unsplash)
+ * Search for images using Google Image Search via SerpApi
  */
 export async function searchImages(
   options: SearchImagesOptions,
@@ -196,24 +141,18 @@ export async function searchImages(
     return [];
   }
 
-  let results: MediaItem[] = [];
-
-  // Try Google Image Search first (best for technical diagrams & concepts)
-  if (SERPAPI_KEY) {
-    try {
-      results = await searchGoogleImages(query, maxResults);
-    } catch (error) {
-      console.error('Google Image search failed, trying fallback:', error);
-    }
+  if (!SERPAPI_KEY) {
+    console.warn('SERPAPI_KEY not configured, cannot search for images');
+    return [];
   }
 
-  // Fallback to Unsplash if Google search returned no results
-  if (results.length === 0) {
-    try {
-      results = await searchUnsplash(query, maxResults);
-    } catch (error) {
-      console.error('Unsplash search also failed:', error);
-    }
+  let results: MediaItem[] = [];
+
+  try {
+    results = await searchGoogleImages(query, maxResults);
+  } catch (error) {
+    console.error('Google Image search failed:', error);
+    return [];
   }
 
   // Override caption if provided
